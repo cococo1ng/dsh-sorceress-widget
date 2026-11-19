@@ -9,6 +9,8 @@
 - 两张码内联进 `client.js`（只内联、不镜像进 `assets`，避免包里多一份）：群码 lossless webp 58 KB、赞赏码 480px webp 13 KB；`client.js` 1614.0 → **1716.0 KB**。
 - 实跑台补 5 项关于页断言（三个按钮、标题与 tab、群号与两张码、data URI、返回恢复）。
 
+发布：npm `dsh-sorceress-widget@0.56.0`（2026-11-19）· GitHub Release `v0.56.0`（仓库 public，README/Release 含群码与赞赏码）。
+
 验收：`python build.py`（0.56.0）· 面板实跑台全绿（含新增 5 项）· 深层实跑 25 项全绿 · 静态扫描 / 数据完整性 / 路由 44 项全绿。
 
 ## 0.55.9 — 2026-11-19
