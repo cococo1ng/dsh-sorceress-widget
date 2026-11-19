@@ -1,0 +1,25 @@
+{
+  "_source": "派生自 src/design_tokens.json（金工刻槽），仅为本目录样张提供 R40 所需三组离散数值；真源仍是 src/design_tokens.json",
+  "name": "Sorceress · 插画风菜单栏",
+  "colors": {
+    "ink": "#0E1424",
+    "veil": "#172038",
+    "navy": "#2A3345",
+    "gold": "#C9A45C",
+    "goldLit": "#E3C588",
+    "parch": "#E8DDC6",
+    "muted": "#9A907C",
+    "wash": "#3A4360",
+    "rose": "#C98F6A",
+    "pageBg": "#12161F",
+    "skyHigh": "#26314F",
+    "faint": "#5F6879",
+    "caption": "#7E879A",
+    "noteText": "#9AA3B4",
+    "starHi": "#FFF3DA"
+  },
+  "fonts": [12, 15, 20, 34],
+  "space": [6, 12, 24, 40],
+  "radius": [4, 8, 12],
+  "motion": { "ease": "ease", "dur": "150ms" }
+}

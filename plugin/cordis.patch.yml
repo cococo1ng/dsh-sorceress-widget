@@ -1,0 +1,4 @@
+# Sorceress · 塔罗挂件 —— 挂到 Web 界面的 bundle patch
+- insert:
+    - id: dsh-sorceress-widget
+      name: dsh-sorceress-widget

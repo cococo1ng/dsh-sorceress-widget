@@ -1,0 +1,30 @@
+{
+  "name": "dsh-sorceress-widget",
+  "version": "0.56.0",
+  "description": "右下角会说话的塔罗女巫 Sorceress：抽塔罗、看每日星座、记情绪、查计费账单。素材内联；外网只走余额接口，磁盘只写一份用量账本。",
+  "type": "module",
+  "private": true,
+  "license": "MIT",
+  "scripts": {
+    "build": "python build.py",
+    "build:client": "python build.py --no-assets",
+    "test:routes": "node plugin/test-routes.mjs",
+    "test:billing": "node test-billing.mjs",
+    "test:panel": "python tools/live-harness/run_panel.py",
+    "test:static": "node tools/checks/static_scan.mjs",
+    "test:algo": "node tools/checks/algo_assert.mjs",
+    "test:data": "python tools/checks/data_integrity.py",
+    "test:host": "node tools/checks/host_events.mjs",
+    "test:deep": "python tools/live-harness/deep_checks.py",
+    "verify": "node plugin/test-routes.mjs && node test-billing.mjs",
+    "verify:deep": "node tools/checks/static_scan.mjs && node tools/checks/algo_assert.mjs && node tools/checks/host_events.mjs && python tools/checks/data_integrity.py"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/cococo1ng/dsh-sorceress-widget.git"
+  },
+  "homepage": "https://github.com/cococo1ng/dsh-sorceress-widget#readme",
+  "bugs": {
+    "url": "https://github.com/cococo1ng/dsh-sorceress-widget/issues"
+  }
+}

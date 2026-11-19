@@ -1,0 +1,56 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>Sorceress 挂件 · 本地实跑台</title>
+<style>
+  html,body{margin:0;padding:0;height:100%;}
+  body{
+    background:
+      radial-gradient(1200px 700px at 78% 18%, #1d2a4a 0%, #101a2e 45%, #080d18 100%);
+    color:#cbd6ea;font-family:-apple-system,"Segoe UI","Microsoft YaHei",sans-serif;
+  }
+  .faux{position:absolute;left:40px;top:36px;max-width:520px;line-height:1.7;font-size:13px;opacity:.55}
+  .faux h1{font-size:17px;font-weight:600;margin:0 0 8px}
+</style>
+</head>
+<body>
+<div class="faux">
+  <h1>本地实跑台（模拟 DSH shell.overlay）</h1>
+  下面用的是真实的 <code>plugin/client.js</code> 构建产物：8 张立绘来自 data URI，
+  <code>__ModuleLoader__</code> 与 <code>ctx.slots</code> 是桩，其余逻辑一行没改。
+</div>
+<div id="host"></div>
+
+<script src="./node_modules/react/umd/react.development.js"></script>
+<script src="./node_modules/react-dom/umd/react-dom.development.js"></script>
+<script>
+  window.__SRS_TEST_LOG = [];
+  window.__ModuleLoader__ = {
+    load(def) {
+      window.__SRS_TEST_LOG.push('load:' + def.id);
+      const req = (name) => (name === 'react' ? window.React : name === 'react-dom' ? window.ReactDOM : undefined);
+      const mod = def.factory(req);
+      window.__SRS_MOD = mod;
+      const ctx = {
+        effect(fn) { try { const off = fn(); return () => { if (typeof off === 'function') off(); }; } catch (e) { return () => {}; } },
+        on() { return () => {}; },
+        locale: null,
+        slots: {
+          inject(name, fn) { window.__SRS_TEST_LOG.push('inject:' + name); try { fn(); } catch (e) { window.__SRS_TEST_LOG.push('inject-err:' + e.message); } },
+          register(opts, Comp) {
+            window.__SRS_TEST_LOG.push('register:' + (opts && opts.name));
+            const root = ReactDOM.createRoot(document.getElementById('host'));
+            root.render(React.createElement(Comp));
+            return () => {};
+          },
+        },
+      };
+      if (!mod || typeof mod.apply !== 'function') { window.__SRS_TEST_LOG.push('NO-APPLY'); return; }
+      mod.apply(ctx);
+    },
+  };
+</script>
+<script src="/client.js"></script>
+</body>
+</html>

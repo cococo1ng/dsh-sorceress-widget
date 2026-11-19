@@ -1,0 +1,76 @@
+{
+  "name": "dsh-sorceress-widget",
+  "version": "0.56.0",
+  "description": "Tarot-reading witch companion for DeepSeek Harness: position-aware tarot spreads, daily horoscope with real moon phase, mood diary and a usage-bill panel. / 右下角会说话的塔罗女巫：抽塔罗（三张与凯尔特十张带位置含义）、每日星座（按真月相与元素取句）、情绪日记、计费账单。素材全内联，零外部进程依赖。",
+  "type": "module",
+  "main": "index.js",
+  "icon": "./icon.png",
+  "exports": {
+    ".": "./index.js",
+    "./client": "./client.js",
+    "./icon": "./icon.png"
+  },
+  "files": [
+    "index.js",
+    "client.js",
+    "cordis.patch.yml",
+    "assets",
+    "data",
+    "icon.png",
+    "icon-128.png",
+    "icon-256.png",
+    "README.md",
+    "CHANGELOG.md",
+    "NOTICE.md",
+    "LICENSE",
+    "LICENSE-ASSETS",
+    "docs",
+    "screenshots.json"
+  ],
+  "keywords": [
+    "dsh",
+    "dsh-plugin",
+    "deepseek-harness",
+    "widget",
+    "desktop-pet",
+    "tarot",
+    "sorceress"
+  ],
+  "peerDependencies": {
+    "@deepseek-ai/dsh-host-webserver": ">=0.1.0-rc.6"
+  },
+  "publishConfig": {
+    "registry": "https://registry.npmjs.org",
+    "access": "public"
+  },
+  "license": "MIT",
+  "dsh": {
+    "name": "Sorceress · 塔罗挂件",
+    "category": "ui",
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "platform": "web",
+      "immediately": true,
+      "inject": [
+        "@deepseek-ai/dsh-client-ui-layout"
+      ]
+    },
+    "displayName": "Sorceress · 塔罗挂件"
+  },
+  "displayName": "Sorceress · 塔罗挂件",
+  "author": "YG",
+  "engines": {
+    "node": ">=18",
+    "dsh": ">=0.2.0"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/cococo1ng/dsh-sorceress-widget.git"
+  },
+  "homepage": "https://github.com/cococo1ng/dsh-sorceress-widget#readme",
+  "bugs": {
+    "url": "https://github.com/cococo1ng/dsh-sorceress-widget/issues"
+  }
+}

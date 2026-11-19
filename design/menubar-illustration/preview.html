@@ -1,0 +1,228 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>Sorceress · 插画风菜单栏 · 候选样张</title>
+<style>
+  :root{
+    --ink:#0E1424; --veil:#172038; --navy:#2A3345;
+    --gold:#C9A45C; --goldLit:#E3C588; --parch:#E8DDC6; --muted:#9A907C;
+    --wash:#3A4360; --rose:#C98F6A;
+    --f12:12px; --f15:15px; --f20:20px;
+    --sp1:6px; --sp2:12px; --sp3:24px;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;background:#12161f;color:#9AA3B4;
+    font-family:Inter,system-ui,-apple-system,"Segoe UI","Microsoft YaHei",sans-serif}
+  .page{width:420px;padding:20px 0 28px}
+  .cap{margin:0 0 6px 20px;font-size:12px;letter-spacing:.04em;color:#7E879A}
+  .cap b{color:#C9A45C;font-weight:600}
+  .note{margin:2px 0 18px 20px;font-size:11px;color:#5F6879}
+
+  /* ── 夜空底（模拟 panel-bg.webp 的观感）───────────────────── */
+  .bar{
+    position:relative;width:340px;margin-left:20px;
+    background:
+      radial-gradient(120% 140% at 18% 0%, #26314F 0%, #172038 42%, #0E1424 100%);
+    border-bottom:1px solid rgba(201,164,92,.14);
+    border-radius:10px 10px 0 0;overflow:hidden;
+  }
+  .bar::after{ /* 星点：只落在栏顶部 40% 区间，别压到字上 */
+    content:"";position:absolute;inset:0;pointer-events:none;opacity:.34;
+    background-image:
+      radial-gradient(1px 1px at 12% 16%, #E3C588 40%, transparent 42%),
+      radial-gradient(1px 1px at 33% 30%, #E3C588 40%, transparent 42%),
+      radial-gradient(1.2px 1.2px at 56% 12%, #FFF3DA 40%, transparent 42%),
+      radial-gradient(1px 1px at 71% 34%, #C9A45C 40%, transparent 42%),
+      radial-gradient(1px 1px at 88% 20%, #E3C588 40%, transparent 42%);
+  }
+
+  /* ── 公共：图标 ──────────────────────────────────────────── */
+  .ic{width:24px;height:24px;display:block;flex:0 0 auto;
+      stroke:currentColor;fill:none;stroke-width:1.55;
+      stroke-linecap:round;stroke-linejoin:round;
+      filter:url(#wobble)}
+
+  /* ── 现状 v0.32.2 ───────────────────────────────────────── */
+  .bar-old{height:40px;display:flex;align-items:center;gap:8px;padding:0 8px}
+  .bar-old .g{display:flex;align-items:center;gap:8px}
+  .bar-old .g+.g{margin-left:8px}
+  .told{height:32px;padding:0 8px;border:0;border-radius:8px;background:transparent;
+        color:var(--muted);font:400 12px/1 inherit;letter-spacing:0}
+  .told.on{background:rgba(201,164,92,.12);color:var(--parch);font-weight:600;
+           box-shadow:inset 0 0 0 1px rgba(227,197,136,.34)}
+
+  /* ── 新菜单栏骨架（三案共用）────────────────────────────── */
+  .bar-new{height:56px;display:flex;align-items:stretch;padding:0 8px;gap:4px}
+  .tab{
+    flex:1 1 0;min-width:0;display:flex;flex-direction:column;align-items:center;justify-content:center;
+    gap:4px;padding:8px 4px;border:0;background:transparent;position:relative;
+    color:var(--muted);font:400 12px/1 inherit;cursor:pointer;
+    transition:color 150ms ease,background-color 150ms ease;
+  }
+  .tab .lab{font-size:12px;line-height:1;letter-spacing:0;white-space:nowrap}
+  /* 分组分隔：手绘竖线 + 中央小星 */
+  .sep{flex:0 0 8px;width:8px}
+
+  /* 方案 A · 高亮笔触 */
+  .A .tab:hover,.A .tab.hv{color:var(--parch);background:rgba(201,164,92,.05)}
+  .A .tab.on{color:var(--parch);font-weight:600}
+  .A .tab.on .ic{color:var(--goldLit)}
+  .A .tab .wash{position:absolute;left:18%;right:18%;bottom:1px;height:9px;
+      opacity:0;transition:opacity 150ms ease;pointer-events:none}
+  .A .tab.on .wash,.A .tab:hover .wash{opacity:1}
+  .A .tab:hover .wash{opacity:.45}
+  .A .tab.on .wash{opacity:1}
+
+  /* 方案 B · 手绘书签 */
+  .B .tab:hover,.B .tab.hv{color:var(--parch);background:rgba(201,164,92,.05)}
+  .B .tab.on{color:var(--parch);font-weight:600;background:rgba(201,164,92,.09);
+      border-radius:8px 8px 0 0;box-shadow:inset 0 1px 0 rgba(227,197,136,.30),
+      inset 1px 0 0 rgba(227,197,136,.18),inset -1px 0 0 rgba(227,197,136,.18)}
+  .B .tab.on .ic{color:var(--goldLit)}
+  .B .tab .flag{position:absolute;left:50%;bottom:0;transform:translateX(-50%);
+      width:14px;height:9px;opacity:0;transition:opacity 150ms ease;pointer-events:none}
+  .B .tab.on .flag{opacity:1}
+
+  /* 方案 C · 星光环绕 */
+  .C .tab:hover,.C .tab.hv{color:var(--parch)}
+  .C .tab.on{color:var(--goldLit);font-weight:600}
+  .C .tab .ring{position:absolute;top:5px;left:50%;transform:translateX(-50%);
+      width:34px;height:34px;opacity:0;transition:opacity 150ms ease;pointer-events:none}
+  .C .tab.on .ring{opacity:1}
+  .C .tab .ic{position:relative;z-index:1}
+  .C .tab:hover .ic{color:var(--parch)}
+</style>
+</head>
+<body>
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <defs>
+    <!-- 手绘抖动：让线条边缘轻微不规则，别像 CSS 画的 -->
+    <filter id="wobble" x="-20%" y="-20%" width="140%" height="140%">
+      <feTurbulence type="fractalNoise" baseFrequency="0.045" numOctaves="2" seed="7" result="n"/>
+      <feDisplacementMap in="SourceGraphic" in2="n" scale="1.15" xChannelSelector="R" yChannelSelector="G"/>
+    </filter>
+    <filter id="wobbleSoft" x="-30%" y="-30%" width="160%" height="160%">
+      <feTurbulence type="fractalNoise" baseFrequency="0.035" numOctaves="2" seed="3" result="n"/>
+      <feDisplacementMap in="SourceGraphic" in2="n" scale="2.1" xChannelSelector="R" yChannelSelector="G"/>
+    </filter>
+
+    <linearGradient id="brushGold" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0"    stop-color="#C9A45C" stop-opacity="0"/>
+      <stop offset=".14"  stop-color="#C9A45C" stop-opacity=".95"/>
+      <stop offset=".5"   stop-color="#E3C588" stop-opacity="1"/>
+      <stop offset=".86"  stop-color="#C9A45C" stop-opacity=".95"/>
+      <stop offset="1"    stop-color="#C9A45C" stop-opacity="0"/>
+    </linearGradient>
+    <linearGradient id="brushFade" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0"   stop-color="#C9A45C" stop-opacity="0"/>
+      <stop offset=".2"  stop-color="#C9A45C" stop-opacity=".55"/>
+      <stop offset=".8"  stop-color="#C9A45C" stop-opacity=".55"/>
+      <stop offset="1"   stop-color="#C9A45C" stop-opacity="0"/>
+    </linearGradient>
+
+    <!-- ── 六枚插画图标（24×24）───────────────────────────── -->
+    <symbol id="i-tarot" viewBox="0 0 24 24">
+      <path d="M8.9 5.6l9.2 2.5a1.7 1.7 0 0 1 1.2 2.1l-2.3 8.3a1.7 1.7 0 0 1-2.1 1.2l-9.2-2.5a1.7 1.7 0 0 1-1.2-2.1L6.8 6.8a1.7 1.7 0 0 1 2.1-1.2z"/>
+      <path d="M11.9 9.3l.85 2.35 2.35.85-2.35.85-.85 2.35-.85-2.35-2.35-.85 2.35-.85z"/>
+    </symbol>
+    <symbol id="i-divine" viewBox="0 0 24 24">
+      <circle cx="12" cy="10" r="5.9"/>
+      <path d="M13.5 7.4a2.7 2.7 0 1 0 .1 5.1 3.35 3.35 0 1 1-.1-5.1z"/>
+      <path d="M7.4 16.6c1.2 1.1 2.8 1.7 4.6 1.7s3.4-.6 4.6-1.7"/>
+    </symbol>
+    <symbol id="i-zodiac" viewBox="0 0 24 24">
+      <path d="M6.6 16.2L12 6.6l5.4 9.6" opacity=".4"/>
+      <circle cx="6.6" cy="16.2" r="1.5"/>
+      <circle cx="12" cy="6.6" r="1.9"/>
+      <circle cx="17.4" cy="16.2" r="1.5"/>
+    </symbol>
+    <symbol id="i-bill" viewBox="0 0 24 24">
+      <path d="M6.9 4.4h10.2v15.1l-2.55-1.7-2.55 1.7-2.55-1.7L6.9 19.5z"/>
+      <path d="M9.6 9h4.8M9.6 12.4h4.8" opacity=".9"/>
+    </symbol>
+    <symbol id="i-sound" viewBox="0 0 24 24">
+      <path d="M10.6 16.9V6.7l6.6-1.5v10.2"/>
+      <ellipse cx="8.4" cy="17.3" rx="2.3" ry="1.8" opacity=".9"/>
+      <ellipse cx="15" cy="15.5" rx="2.3" ry="1.8" opacity=".9"/>
+    </symbol>
+    <symbol id="i-profile" viewBox="0 0 24 24">
+      <circle cx="12" cy="8.8" r="3.5"/>
+      <path d="M5.6 19.6c.7-3.6 3.2-5.6 6.4-5.6s5.7 2 6.4 5.6"/>
+    </symbol>
+  </defs>
+</svg>
+
+<div class="page">
+
+  <p class="cap"><b>现状</b> · v0.32.2　纯文字 tab，选中＝金色细边方框</p>
+  <p class="note">六个中文 tab 已把 340px 填满，没有放图标的余量</p>
+  <div class="bar"><div class="bar-old">
+    <div class="g"><button class="told on">塔罗</button><button class="told">占卜</button><button class="told">星座</button></div>
+    <div class="g"><button class="told">计费</button><button class="told">声效</button><button class="told">档案</button></div>
+  </div></div>
+
+  <p class="cap" style="margin-top:26px"><b>方案 A · 高亮笔触</b>（推荐）　图标在上、文字在下，选中＝底下一道水彩画笔</p>
+  <p class="note">选中的那一格像被人用金笔划了一道；不占额外高度，hover 是同一道笔但更淡</p>
+  <div class="bar A"><div class="bar-new">
+    <button class="tab on"><svg class="ic"><use href="#i-tarot"/></svg><span class="lab">塔罗</span>
+      <svg class="wash" viewBox="0 0 100 12" preserveAspectRatio="none">
+        <path d="M4 8.6C22 6.6 40 6.2 58 6.9c14 .5 26 1 38 .4" stroke="url(#brushFade)" stroke-width="7" stroke-linecap="round" fill="none"/>
+        <path d="M4 8.4C22 6.4 41 6 59 6.7c13 .5 25 1 37 .5" stroke="url(#brushGold)" stroke-width="2.6" stroke-linecap="round" fill="none"/>
+      </svg>
+    </button>
+    <button class="tab"><svg class="ic"><use href="#i-divine"/></svg><span class="lab">占卜</span></button>
+    <button class="tab"><svg class="ic"><use href="#i-zodiac"/></svg><span class="lab">星座</span></button>
+    <div class="sep"></div>
+    <button class="tab"><svg class="ic"><use href="#i-bill"/></svg><span class="lab">计费</span></button>
+    <button class="tab hv"><svg class="ic"><use href="#i-sound"/></svg><span class="lab">声效</span>
+      <svg class="wash" viewBox="0 0 100 12" preserveAspectRatio="none">
+        <path d="M4 8.6C22 6.6 40 6.2 58 6.9c14 .5 26 1 38 .4" stroke="url(#brushFade)" stroke-width="7" stroke-linecap="round" fill="none" opacity=".45"/>
+      </svg>
+    </button>
+    <button class="tab"><svg class="ic"><use href="#i-profile"/></svg><span class="lab">档案</span></button>
+  </div></div>
+
+  <p class="cap" style="margin-top:26px"><b>方案 B · 手绘书签</b>　选中＝整格提亮成一枚倒角书签，底边垂一个小三角</p>
+  <p class="note">对比最重、离得最远也认得出；但六格排满亮底会显得栏内偏花</p>
+  <div class="bar B"><div class="bar-new">
+    <button class="tab on"><svg class="ic"><use href="#i-tarot"/></svg><span class="lab">塔罗</span>
+      <svg class="flag" viewBox="0 0 14 9"><path d="M1 .8h12v6.4L7 4.3.9 7.2z" fill="rgba(201,164,92,.28)" stroke="#C9A45C" stroke-width="1.1" stroke-linejoin="round" filter="url(#wobbleSoft)"/></svg>
+    </button>
+    <button class="tab"><svg class="ic"><use href="#i-divine"/></svg><span class="lab">占卜</span></button>
+    <button class="tab"><svg class="ic"><use href="#i-zodiac"/></svg><span class="lab">星座</span></button>
+    <div class="sep"></div>
+    <button class="tab"><svg class="ic"><use href="#i-bill"/></svg><span class="lab">计费</span></button>
+    <button class="tab"><svg class="ic"><use href="#i-sound"/></svg><span class="lab">声效</span></button>
+    <button class="tab"><svg class="ic"><use href="#i-profile"/></svg><span class="lab">档案</span></button>
+  </div></div>
+
+  <p class="cap" style="margin-top:26px"><b>方案 C · 星光环绕</b>　不加任何底色，选中＝图标外一圈手绘虚线星环 + 文字转金</p>
+  <p class="note">最安静，和夜空底最融；但选中态的辨识距离最弱</p>
+  <div class="bar C"><div class="bar-new">
+    <button class="tab on"><svg class="ring" viewBox="0 0 34 34">
+        <circle cx="17" cy="17" r="15.2" fill="none" stroke="#C9A45C" stroke-width="1" stroke-dasharray="2.2 3.6" opacity=".85" filter="url(#wobbleSoft)"/>
+        <circle cx="17" cy="17" r="15.2" fill="rgba(201,164,92,.07)"/>
+      </svg><svg class="ic"><use href="#i-tarot"/></svg><span class="lab">塔罗</span></button>
+    <button class="tab"><svg class="ic"><use href="#i-divine"/></svg><span class="lab">占卜</span></button>
+    <button class="tab"><svg class="ic"><use href="#i-zodiac"/></svg><span class="lab">星座</span></button>
+    <div class="sep"></div>
+    <button class="tab"><svg class="ic"><use href="#i-bill"/></svg><span class="lab">计费</span></button>
+    <button class="tab"><svg class="ic"><use href="#i-sound"/></svg><span class="lab">声效</span></button>
+    <button class="tab"><svg class="ic"><use href="#i-profile"/></svg><span class="lab">档案</span></button>
+  </div></div>
+
+  <p class="cap" style="margin-top:26px"><b>六枚图标</b>　24×24 · 1.55 描边 · 手绘抖动滤镜 · 单色随选中态转金</p>
+  <p class="note">塔罗牌 / 水晶球 / 三星连线 / 收据 / 音符 / 人像　—— 与插件现有水彩立绘、金线角花同一套语言</p>
+  <div class="bar" style="height:64px;display:flex;align-items:center;justify-content:space-around;padding:0 18px;color:#C9A45C;border-radius:10px">
+    <svg class="ic" style="width:30px;height:30px"><use href="#i-tarot"/></svg>
+    <svg class="ic" style="width:30px;height:30px"><use href="#i-divine"/></svg>
+    <svg class="ic" style="width:30px;height:30px"><use href="#i-zodiac"/></svg>
+    <svg class="ic" style="width:30px;height:30px"><use href="#i-bill"/></svg>
+    <svg class="ic" style="width:30px;height:30px"><use href="#i-sound"/></svg>
+    <svg class="ic" style="width:30px;height:30px"><use href="#i-profile"/></svg>
+  </div>
+
+</div>
+</body>
+</html>

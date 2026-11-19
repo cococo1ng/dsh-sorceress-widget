@@ -1,0 +1,119 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>Sorceress · 关于（预览）</title>
+<style>
+  :root{
+    --ink:#0E1424; --veil:#172038; --navy:#2A3345;
+    --gold:#C9A45C; --gold-lit:#E3C588; --parch:#E8DDC6; --muted:#9A907C;
+    --line:rgba(201,164,92,.24);
+  }
+  *{box-sizing:border-box}
+  body{margin:0;padding:28px 0;background:#080d18;display:flex;justify-content:center;
+       font-family:"Microsoft YaHei","PingFang SC",sans-serif}
+  .panel{position:relative;width:340px;padding:0 0 14px;
+         background:linear-gradient(180deg,#10182B 0%,#0E1424 55%,#0A1020 100%);
+         border:1px solid rgba(201,164,92,.55);border-radius:10px;color:var(--parch);
+         box-shadow:0 20px 60px rgba(0,0,0,.65)}
+  .corner{position:absolute;width:18px;height:18px;background-size:100% 100%;pointer-events:none;opacity:.92}
+  .tl{left:5px;top:5px}.tr{right:5px;top:5px}.bl{left:5px;bottom:5px}.br{right:5px;bottom:5px}
+  .head{display:flex;align-items:center;justify-content:space-between;padding:12px 16px 8px}
+  .title{font-size:20px;color:var(--parch);letter-spacing:.5px}
+  .x{width:22px;height:22px;display:flex;align-items:center;justify-content:center;
+     color:var(--muted);font-size:15px;border:1px solid var(--line);border-radius:5px}
+  .rule{height:1px;margin:0 16px;background:linear-gradient(90deg,transparent,var(--line),transparent)}
+  .body{padding:10px 16px 0}
+  h2{font-size:15px;color:var(--gold);font-weight:600;margin:16px 0 6px;letter-spacing:.4px}
+  h2:first-child{margin-top:6px}
+  p{margin:0 0 8px;font-size:12.5px;line-height:1.8;color:#D6C7AA}
+  p.lead{color:var(--parch);font-size:13px}
+  ul{margin:2px 0 8px;padding-left:16px}
+  li{font-size:12.5px;line-height:1.8;color:#D6C7AA;margin-bottom:2px}
+  li b{color:var(--gold-lit);font-weight:600}
+  .note{font-size:12px;color:var(--muted)}
+  .shot{display:block;margin:8px auto 4px;background:#fff;border:1px solid rgba(201,164,92,.45);
+        border-radius:6px;padding:0}
+  .shot.qq{width:190px}
+  .shot.tip{width:208px}
+  .cap{text-align:center;font-size:12px;color:var(--muted);margin:0 0 6px}
+  .sep{height:1px;margin:14px 0 0;background:linear-gradient(90deg,transparent,var(--line),transparent)}
+</style>
+</head>
+<body>
+<div class="panel">
+  <i class="corner tl" style="background-image:url('../assets/ui/corner-tl.webp')"></i>
+  <i class="corner tr" style="background-image:url('../assets/ui/corner-tr.webp')"></i>
+  <i class="corner bl" style="background-image:url('../assets/ui/corner-bl.webp')"></i>
+  <i class="corner br" style="background-image:url('../assets/ui/corner-br.webp')"></i>
+
+  <div class="head"><div class="title">关于</div><div class="x">×</div></div>
+  <div class="rule"></div>
+
+  <div class="body">
+    <p class="lead">我住在这块屏幕的角上。你点我，我就说话；你不点，我就待着。</p>
+
+    <h2>这是什么</h2>
+    <p>一个挂在 DSH 右下角的塔罗挂件。抽牌、看今天的星座、记一笔心情、看一眼这个月花了几块钱。不联网占卜，也不上传任何东西。</p>
+
+    <h2>六个页面</h2>
+    <ul>
+      <li><b>塔罗</b>：每日一牌 / 单张 / 三张 / 凯尔特十张。每位先说这一位在问什么，再看这张牌是正是逆。</li>
+      <li><b>占卜</b>：每日一签、情绪打卡、二选一、双人牌、关系阵；另有安神三分钟与许愿瓶。</li>
+      <li><b>星座</b>：按生日或手动选星座。月相按真实月龄算，水星、金星、火星逆行按低精度轨道算。</li>
+      <li><b>计费</b>：数字只认宿主账本——逐轮读真实用量，按官方价目表算钱；价目表里没有的模型只记 token，标「未计价」。</li>
+      <li><b>配置</b>：音效、环境音景、气泡、说话档位、台词、人物姿态、每日提醒。</li>
+      <li><b>档案</b>：生日 → 本命牌 / 星座 / 四柱；周期日历；每天记一笔；婚配。全部加密存放。</li>
+    </ul>
+
+    <h2>三条边界</h2>
+    <ul>
+      <li>不预测生死、疾病、官司、投资涨跌、婚丧嫁娶。牌只给倾向，不给判决。</li>
+      <li>不回答「他 / 她爱不爱你」。双人牌只写关系现状与可能。</li>
+      <li>情绪、周期、月相对照都只是你自己的记录，不当医疗、避孕或用药依据。</li>
+    </ul>
+
+    <h2>数据在哪</h2>
+    <ul>
+      <li>全部存在这台机器的浏览器里（localStorage，键名以 <b>srs.</b> 开头）。没有账号，没有服务器，插件本身不向外发请求——断网冷启动实测 0 条外网请求。</li>
+      <li>唯一对外的一处：打开计费页读余额时，由宿主代发一次请求，API Key 不出宿主进程。</li>
+      <li>私密档案用密码加密：PBKDF2 迭代 12 万次 + AES-GCM；密码不落盘，关面板即锁档，重开要重新输。</li>
+    </ul>
+
+    <h2>怎么算的</h2>
+    <ul>
+      <li><b>牌序</b>：crypto 取种子 → mulberry32 → Fisher–Yates。同一种子必然同一副顺序，所以历史能原样重放。</li>
+      <li><b>四柱</b>：年按立春、月按节（低精度太阳视黄经，误差约 ±2 分钟），日按儒略日，时按五鼠遁；东八区平太阳时，不做真太阳时校正。</li>
+      <li><b>月相</b>：平均黄经加主异常项，误差约 ±10°，只用来看气氛。</li>
+      <li><b>逆行</b>：三颗行星的低精度开普勒轨道，只看地心黄经的正负，不报度数。</li>
+      <li><b>婚配</b>：只比五项结构——年支、日支、日干五行、年柱纳音、五行互补。分数是加权合成，不是结局。</li>
+    </ul>
+
+    <h2>素材与许可</h2>
+    <ul>
+      <li>立绘 19 张，主人出图。</li>
+      <li>牌面 78 张加牌背，Rider–Waite 体系。</li>
+      <li>音效 16 路，Mixkit Free License 的真实录音，清单见 NOTICE.md。</li>
+      <li>代码 MIT。</li>
+    </ul>
+
+    <div class="sep"></div>
+    <h2>交流</h2>
+    <p>QQ 群 127879829。装插件、报问题、聊读牌都在里面，作者也在。群里不做付费算命。</p>
+    <img class="shot qq" src="about-assets/qq-group.png" alt="Sorceress 交流群二维码">
+
+    <div class="sep"></div>
+    <h2>赞赏</h2>
+    <p>挂件免费，功能不设门槛。想请我喝碗茶，扫这张；不扫，功能一点不少。</p>
+    <img class="shot tip" src="about-assets/tip.jpg" alt="赞赏码">
+    <p class="cap">赞赏不换功能、不解锁内容、不插队</p>
+
+    <div class="sep"></div>
+    <h2>版本与反馈</h2>
+    <p>当前 0.55.7。素材全部内联，不依赖任何外部进程。</p>
+    <p class="note">没有工单系统。台词可以在「配置 → 编辑台词」里改，一行一句，改完保存；设置可以导出成 JSON 备份。</p>
+  </div>
+</div>
+</body>
+</html>
+

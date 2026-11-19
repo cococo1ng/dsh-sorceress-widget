@@ -1,0 +1,14 @@
+{
+  "name": "Sorceress — 金工刻槽",
+  "colors": {
+    "ink": "#0E1424",
+    "veil": "#172038",
+    "navy": "#2A3345",
+    "gold": "#C9A45C",
+    "goldLit": "#E3C588",
+    "parch": "#E8DDC6",
+    "muted": "#9A907C"
+  },
+  "fonts": [12, 15, 20, 34],
+  "space": [6, 12, 24, 40]
+}

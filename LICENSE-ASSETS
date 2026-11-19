@@ -1,0 +1,18 @@
+# LICENSE-ASSETS — 美术素材授权（不适用 MIT）
+
+适用文件：
+  assets/sorceress/*.webp        8 张立绘
+  assets/cards/big/*.webp        78 张牌面大图
+  assets/cards/thumb/*.webp      78 张缩略
+  assets/cards/back.webp         牌背
+  icon.png / icon-256.png / icon-128.png
+
+这些是原创素材，版权保留。允许：
+  · 随本插件原样分发（含镜像、包管理器分发）
+  · 在自己的 DSH 里正常使用、截图分享
+
+不允许：
+  · 单独抽出素材用于其他产品、模板、素材包
+  · 二次训练、二次售卖、声称原创
+
+授权疑问直接开 issue。

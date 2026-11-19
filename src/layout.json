@@ -1,0 +1,10 @@
+{
+  "_comment": "立绘几何的唯一真源：渲染层只从这里读，不在代码里写裸数字。改完跑 python verify/geometry.py。立绘原生高 520，rootH 是挂件显示高度；rootW 按最宽姿态（idle-a 344/520=0.659）留出帽子溢出的余量。",
+  "rootW": 180,
+  "rootH": 270,
+  "originY": 0.92,
+  "headGap": 9,
+  "gearBase": 15,
+  "gearMargin": 2,
+  "poseFit": {}
+}

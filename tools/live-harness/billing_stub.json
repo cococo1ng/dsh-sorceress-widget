@@ -1,0 +1,41 @@
+{
+  "ok": true,
+  "balance": 38.62,
+  "recharge": 30.0,
+  "bonus": 8.62,
+  "currency": "CNY",
+  "source": "api-key",
+  "balanceError": null,
+  "balanceErrorCode": null,
+  "todayUsed": 1.2845,
+  "todayUsedByBalance": 1.31,
+  "todayTurns": 7,
+  "todayTokens": 184500,
+  "todayUnpriced": 1,
+  "monthUsed": 12.408,
+  "monthTurns": 63,
+  "history": [
+    { "date": "2026-11-11", "used": 0.62, "turns": 4 },
+    { "date": "2026-11-12", "used": 1.94, "turns": 9 },
+    { "date": "2026-11-13", "used": 0.38, "turns": 3 },
+    { "date": "2026-11-14", "used": 2.71, "turns": 12 },
+    { "date": "2026-11-15", "used": 0.0, "turns": 0 },
+    { "date": "2026-11-16", "used": 1.15, "turns": 6 },
+    { "date": "2026-11-17", "used": 1.2845, "turns": 7 }
+  ],
+  "lastTurn": { "amount": 0.0412, "unpriced": 0, "tokens": 5210, "model": "deepseek-v4-flash", "ts": 1794880800000 },
+  "todayStart": 39.35,
+  "todaySince": 1794903900000,
+  "day": "2026-11-17",
+  "peak": {
+    "peak": true,
+    "label": "高峰价",
+    "next": "谷价",
+    "window": "工作日高峰 9–12 / 14–18",
+    "nextInMs": 5400000,
+    "holidayThrough": 2026,
+    "holidayOk": true
+  },
+  "updatedAt": "2026-11-17T02:20:00.000Z",
+  "live": { "turns": 1, "cost": 0.0617, "tokens": 8120, "unpriced": 0 }
+}

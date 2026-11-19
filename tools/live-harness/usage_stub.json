@@ -1,0 +1,42 @@
+{
+  "ok": true,
+  "range": "today",
+  "q": "",
+  "totals": { "amount": 1.2845, "turns": 7, "tokens": 184500 },
+  "byModel": [
+    { "model": "deepseek-v4-flash", "amount": 1.142, "turns": 6, "tokens": 176300 },
+    { "model": "someone-else-model", "amount": 0.1425, "turns": 1, "tokens": 8200 }
+  ],
+  "bySession": [
+    { "sid": "3f9a12bc", "name": "dsh-sorceress-widget 对菜单栏进行 UI 美化升级", "amount": 0.912, "turns": 4, "tokens": 131400, "lastAt": 1794880800000 },
+    { "sid": "7c1d0e44", "name": "即梦洗牌动画提示词", "amount": 0.246, "turns": 2, "tokens": 37200, "lastAt": 1794873600000 },
+    { "sid": "9b2e7701", "name": "会话 9b2e77", "amount": 0.1265, "turns": 1, "tokens": 15900, "lastAt": 1794866400000 }
+  ],
+  "months": [
+    { "month": "2026-06", "used": 0.0, "turns": 0, "tokens": 0 },
+    { "month": "2026-07", "used": 0.0, "turns": 0, "tokens": 0 },
+    { "month": "2026-08", "used": 0.0, "turns": 0, "tokens": 0 },
+    { "month": "2026-09", "used": 2.14, "turns": 11, "tokens": 320000 },
+    { "month": "2026-10", "used": 6.82, "turns": 38, "tokens": 940000 },
+    { "month": "2026-11", "used": 12.408, "turns": 63, "tokens": 1720000 }
+  ],
+  "days": [{ "date": "2026-11-17", "used": 1.2845, "turns": 7 }],
+  "items": [
+    { "ts": 1794880800000, "date": "2026-11-17", "time": "10:00", "amount": 0.0412, "unpriced": 0, "tokens": 5210, "model": "deepseek-v4-flash", "provider": "", "turn": 7 },
+    { "ts": 1794877200000, "date": "2026-11-17", "time": "09:00", "amount": 0.1425, "unpriced": 1, "tokens": 8200, "model": "someone-else-model", "provider": "workbuddy", "turn": 6 },
+    { "ts": 1794873600000, "date": "2026-11-17", "time": "08:00", "amount": 0.306, "unpriced": 0, "tokens": 41200, "model": "deepseek-v4-flash", "provider": "", "turn": 5 },
+    { "ts": 1794870000000, "date": "2026-11-17", "time": "07:00", "amount": 0.0218, "unpriced": 0, "tokens": 2800, "model": "deepseek-v4-flash", "provider": "", "turn": 4 },
+    { "ts": 1794866400000, "date": "2026-11-17", "time": "06:00", "amount": 0.773, "unpriced": 0, "tokens": 127000, "model": "deepseek-v4-flash", "provider": "", "turn": 3 }
+  ],
+  "itemCount": 7,
+  "retention": {
+    "turnsLive": 7,
+    "turnsCap": 500,
+    "turnDays": 90,
+    "dailyDays": 6,
+    "dailyCap": 365,
+    "archived": 0,
+    "archiveCap": 20000
+  },
+  "now": "2026-11-17T02:20:00.000Z"
+}

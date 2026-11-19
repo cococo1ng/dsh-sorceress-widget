@@ -1,0 +1,7 @@
+_verify/
+__pycache__/
+*.pyc
+_tmp*
+node_modules/
+*.bak*
+.DS_Store
