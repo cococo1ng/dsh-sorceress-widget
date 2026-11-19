@@ -30,7 +30,7 @@ $tmpRc = Join-Path $env:TEMP ("srs-pub-{0}.npmrc" -f [guid]::NewGuid().ToString(
 try {
     Push-Location $root
     Write-Host "发布 $name@$version → https://registry.npmjs.org/"
-    npm publish $PackageDir --access public --userconfig $tmpRc --registry https://registry.npmjs.org --provenance=false
+    npm publish (Join-Path $root $PackageDir) --access public --userconfig $tmpRc --registry https://registry.npmjs.org --provenance=false
     $code = $LASTEXITCODE
     if ($code -eq 0) {
         Write-Host "验证 dist-tags..."
@@ -45,3 +45,4 @@ finally {
     Write-Host "临时 npmrc 已删除：$tmpRc"
     Write-Host "发完记得在 npmjs 网页吊销这个 token，并 setx NODE_AUTH_TOKEN `"`""
 }
+

@@ -1,7 +1,12 @@
 # 发布到 npm
 
-> 状态（2026-11-19）：GitHub 已上线（仓库 + `v0.56.0` tag + Release，README/Release 均含群码与赞赏码）；
-> **npm 待发布**——本机没有 npm 登录态，需要网页生成一个临时 granular token。
+> 状态（2026-11-19 23:35）：**已发布**
+>
+> - npm：`dsh-sorceress-widget@0.56.0`（latest）· tgz shasum `cdf9ec7283d80fb40f445fb4a21f1a57d5801948` · 226 文件 / 10.3 MB
+>   https://www.npmjs.com/package/dsh-sorceress-widget
+> - GitHub：https://github.com/cococo1ng/dsh-sorceress-widget （Release `v0.56.0`，README 与 Release 都带群码/赞赏码）
+> - 本次走 npm 12 的 staged 流程：bypass-2FA 令牌上传 → 先公开 `0.0.0-stage` 占位 → 校验通过后 0.56.0 转 Published；令牌已当场吊销（whoami 401），本地 token 文件已删。
+> - `0.0.0-stage` 会一直留在版本列表里（npm 的占位行为），不影响安装；`latest` 已指向 0.56.0。
 
 ## 一次性准备（网页）
 
