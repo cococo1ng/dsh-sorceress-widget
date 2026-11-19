@@ -1,0 +1,55 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: 依赖
+        run: python -m pip install --upgrade pip pillow
+
+      - name: 产物与源码一致（build 可复现）
+        run: |
+          python build.py --no-assets
+          git diff --exit-code -- plugin/client.js
+
+      - name: 路由 44 项
+        run: node plugin/test-routes.mjs
+
+      - name: 账本口径
+        run: node test-billing.mjs
+
+      - name: 静态扫描
+        run: node tools/checks/static_scan.mjs
+
+      - name: 算法断言
+        run: node tools/checks/algo_assert.mjs
+
+      - name: 宿主边界
+        run: node tools/checks/host_events.mjs
+
+      - name: 数据完整性
+        run: python tools/checks/data_integrity.py
