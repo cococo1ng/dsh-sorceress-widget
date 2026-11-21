@@ -19,7 +19,6 @@ ALPHA = 96
 
 POSES = {
     "idle-a": "sorceress-idle-a.webp",
-    "idle-b": "sorceress-idle-b.webp",
     "think": "sorceress-think.webp",
     "dazed": "sorceress-dazed.webp",
     "shuffle": "sorceress-shuffle.webp",

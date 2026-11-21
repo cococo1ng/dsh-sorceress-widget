@@ -1,7 +1,7 @@
 /** 算法断言：从 client.template.js 抽出 Widget 之前的真实代码，在 Node 里跑。
  *  跑法：node tools/checks/algo_assert.mjs
  *  覆盖：随机/抽牌、牌义、本命牌、四柱、合婚、月相、逆行、星座、牌阵组合、
- *        周期日历、许愿瓶、回顾、穿搭、双人牌、配置迁移、金额格式化。
+ *        周期日历、许愿瓶、回顾、穿搭、配置迁移、金额格式化。
  */
 import fs from 'node:fs'
 import path from 'node:path'
@@ -27,6 +27,7 @@ const stubs = {
   __SRS_VERSION__: '0.0.0-test',
   __DECK_JSON__: JSON.stringify(readJson('deck.json')),
   __TAROT_JSON__: JSON.stringify(readJson('tarot.json')),
+  __TAROT_RICH_JSON__: JSON.stringify(readJson('tarot-rich.json')),
   __HORO_JSON__: JSON.stringify(readJson('horoscope.json')),
   __EMPATHY_JSON__: JSON.stringify(readJson('empathy.json')),
   __HIT_BOXES__: '{}',
@@ -66,10 +67,12 @@ globalThis.Object.defineProperty(globalThis, 'localStorage', { value: globalThis
 
 const expose = `
 ;globalThis.__M = { prng, meaningOf, birthCard, fourPillars, jieTime, sunLongitude,
-  hepan, zhiPair, wxPair, wxCounts, moonInfo, retroGrade, signOf, signFromBirthday, todayCard,
+  hepan, zhiPair, wxPair, wxCounts, strengthOf, moonInfo, moonDayKind, isNewMoonDay, isFullMoonDay,
+  retroGrade, signOf, signFromBirthday, todayCard,
   strHash, combineSpread, readAt, cycleLenOf, cycleBled, cycleDayState, cycleCalendar, cycleInfo,
   cycleStrip, nextMoonDay, nextBirthdayDay, wishOpenDay, daysUntil, isoDay, localDayKey,
-  reviewOf, wearPlan, duoReading, detailLines, cardMeta, loadCfg, saveCfg, LINES, DEFAULT_CFG }
+  richReading, readingSummary, reviewOf, wearPlan, detailLines, cardMeta, loadCfg, saveCfg,
+  LINES, DEFAULT_CFG }
 `
 const requireStub = () => ({ createElement: () => null })
 try {
@@ -176,11 +179,23 @@ const mk = (lines, reversed) => ({ meaning: { lines }, reversed })
   ok('五行：木克土 -8', M.wxPair('木', '土').delta === -8)
   const pm = M.fourPillars('1990-05-05'); const pf = M.fourPillars('1992-08-08')
   const h = M.hepan(pm, pf)
-  ok('合婚：分数在 5–98', h.score >= 5 && h.score <= 98, h.score)
-  ok('合婚：五项分项', h.items.length === 5, h.items.map((x) => x.name))
+  ok('合婚：分数在 0–100', h.score >= 0 && h.score <= 100, h.score)
+  ok('合婚：三个维度', h.items.length === 3 && h.items.map((x) => x.name).join('/') === '日主/夫妻宫/五行互补', h.items.map((x) => x.name))
+  ok('合婚：明细层有四项', Array.isArray(h.detail) && h.detail.length === 4, h.detail && h.detail.length)
   ok('合婚：三条建议', h.tips.length === 3)
-  ok('合婚：档位是四个之一', ['合得顺', '大体合', '要磨合', '费些劲'].includes(h.level), h.level)
-  ok('合婚：分项 delta 与分数一致', h.items.reduce((s, x) => s + x.delta, 0) + 60 === h.score || h.score === 98 || h.score === 5, h.score)
+  ok('合婚：档位是四个之一', ['契合度较高', '中等偏顺', '需要磨合', '差异较大'].includes(h.level), h.level)
+  // 分数 = ((三个维度之和 + 27) / 83) × 100，四舍五入后夹在 0–100
+  ok('合婚：分项之和能推出分数', (() => {
+    const raw = h.items.reduce((s, x) => s + x.delta, 0)
+    const want = Math.max(0, Math.min(100, Math.round(((raw + 27) / 83) * 100)))
+    return Math.abs(want - h.score) <= 1
+  })(), h.score)
+  ok('合婚：吉凶计数存在', h.tally && typeof h.tally.good === 'number' && typeof h.tally.bad === 'number', h.tally)
+  // 日主双向平均 → 交换双方，三个维度都不变
+  ok('合婚：交换双方维度不变', (() => {
+    const sw = M.hepan(pf, pm)
+    return sw.items[0].delta === h.items[0].delta && sw.items[1].delta === h.items[1].delta
+  })())
   const wx = M.wxCounts(pm)
   ok('五行计数：三柱 6 个 / 四柱 8 个', [6, 8].includes(Object.values(wx).reduce((a, b) => a + b, 0)), wx)
 }
@@ -194,6 +209,14 @@ const mk = (lines, reversed) => ({ meaning: { lines }, reversed })
   ok('满月相位号 = 4', M.moonInfo(fm).phaseIdx === 4, M.moonInfo(fm).phaseIdx)
   const eclipse = new Date('2024-04-08T18:21:00Z')
   ok('2024-04-08 日食（新月）age ≈ 0', M.moonInfo(eclipse).age < 0.4 || M.moonInfo(eclipse).age > 29.1, M.moonInfo(eclipse).age)
+
+  // W5：朔望判定必须能在真实工厂作用域里被调用（曾经因 SYN 是函数局部常量而整块崩掉）
+  ok('moonDayKind 可调用且新月锚点判对', M.moonDayKind(nm) === 'newmoon', M.moonDayKind(nm))
+  ok('moonDayKind 满月锚点判对', M.moonDayKind(fm) === 'fullmoon', M.moonDayKind(fm))
+  ok('isNewMoonDay / isFullMoonDay 与 moonDayKind 同口径',
+    M.isNewMoonDay(nm) === true && M.isFullMoonDay(fm) === true, [M.isNewMoonDay(nm), M.isFullMoonDay(fm)])
+  ok('nextMoonDay 给的日子本身要命中同一判定',
+    M.moonDayKind(new Date(M.nextMoonDay('newmoon') + 'T12:00:00')) === 'newmoon')
 
   ok('水逆 2024-04-10 = 是', M.retroGrade(new Date('2024-04-10T00:00:00Z')).mercury === true)
   ok('水星 2024-01-15 = 否', M.retroGrade(new Date('2024-01-15T00:00:00Z')).mercury === false)
@@ -303,12 +326,6 @@ const mk = (lines, reversed) => ({ meaning: { lines }, reversed })
   const c = M.todayCard('aries', HORO, new Date())
   const w = M.wearPlan(c, HORO)
   ok('穿搭 1–3 项且主色=幸运色', w.length >= 1 && w.length <= 3 && w[0].name === c.color[0], w.map((x) => x.name))
-
-  const duoUp = M.duoReading([mk(['a'], false), mk(['b'], false)])
-  const duoRev = M.duoReading([mk(['a'], true), mk(['b'], true)])
-  const duoMix = M.duoReading([mk(['a'], true), mk(['b'], false)])
-  ok('双人牌三种正逆组合文案不同', new Set([duoUp.tone, duoRev.tone, duoMix.tone]).size === 3)
-  ok('双人牌三条小事', duoUp.tips.length === 3)
 }
 
 // ── 9. 配置迁移 ────────────────────────────────────────────
@@ -325,10 +342,19 @@ const mk = (lines, reversed) => ({ meaning: { lines }, reversed })
   store.set('srs.cfg.v1', JSON.stringify({ remind: { on: true, hh: 99, mm: -3 }, bill: { warnLow: -5, budget: 999999 } }))
   const r = M.loadCfg()
   ok('提醒时间越界收回 21:00', r.remind.hh === 21 && r.remind.mm === 0, r.remind)
-  ok('告急线越界收回 10，预算越界收回 0', r.bill.warnLow === 10 && r.bill.budget === 0, r.bill)
+  ok('告急线越界收回 5，预算越界收回 10', r.bill.warnLow === 5 && r.bill.budget === 10, r.bill)
   const next = Object.assign({}, d, { scale: 1.3 })
   M.saveCfg(next)
   ok('保存后读回一致', JSON.parse(store.get('srs.cfg.v1')).scale === 1.3)
+
+  // 0.58.0：出厂默认锁死在这一套，别被无意改回旧值
+  const D = M.DEFAULT_CFG
+  ok('出厂默认：音效开', D.sound.on === true)
+  ok('出厂默认：环境音景开、音量 60、四路未选', D.amb.on === true && D.amb.volume === 60
+    && Object.values(D.amb.tracks).every((v) => v === false), D.amb)
+  ok('出厂默认：每日提醒开且 21:00', D.remind.on === true && D.remind.hh === 21 && D.remind.mm === 0, D.remind)
+  ok('出厂默认：月相提醒开', D.remind.moon === true)
+  ok('出厂默认：告急线 5 / 今日预算 10', D.bill.warnLow === 5 && D.bill.budget === 10, D.bill)
 }
 
 // ── 10. 金额格式（组件内工具）──────────────────────────────
@@ -355,13 +381,6 @@ const mk = (lines, reversed) => ({ meaning: { lines }, reversed })
   ok('moneyTiny 0.0034 → ¥0.0034', moneyTiny(0.0034) === '¥0.0034')
   ok('moneyTiny 0.5 → ¥0.500', moneyTiny(0.5) === '¥0.500')
   ok('moneyTiny 2 → ¥2.00', moneyTiny(2) === '¥2.00')
-  const es = grabConstArrow('eitherScore')
-  // eslint-disable-next-line no-new-func
-  const eitherScore = new Function('return (' + es + ')')()
-  const picks = (rev) => rev.map((r) => ({ reversed: r }))
-  ok('二选一：A 两正 B 两逆 → A 赢', eitherScore(picks([false, false, false, true, true])).win === 'A')
-  ok('二选一：全正 → 关键也正 → A 与 B 同分', eitherScore(picks([false, false, false, false, false])).win === 'both')
-  ok('二选一：牌数不足返回 null', eitherScore(picks([false])) === null)
 }
 
 console.log(fails ? '\n✗ ' + fails + ' 项没过' : '\n算法断言全绿')

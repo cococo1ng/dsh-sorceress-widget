@@ -15,6 +15,7 @@ import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { registerSorceressTools } from './srs-tools.mjs'
 
 const PLUGIN_DIR = path.dirname(fileURLToPath(import.meta.url))
 const CARDS_DIR = path.join(PLUGIN_DIR, 'assets', 'cards')
@@ -356,6 +357,18 @@ const waitState = { pending: null }
 let runningAgents = 0
 let busySince = 0
 
+// —— D3 会话情绪态 + D5 女巫工具留痕（只活内存，前端经 live.json 3 秒轮询取）——
+// mood：开工 working / 收工 done / 报错 error，挂件据此换姿势、冒一句；同态不重复吵
+const moodState = { kind: null, ts: 0, detail: '' }
+// 最近一次 sorceress_* 工具调用：挂件看到 seq 变大就翻牌/笑一下（D5 面板联动）
+let srsToolState = { seq: 0, name: '', ts: 0, spread: '', cards: 0, ok: false }
+
+function markMood(kind, detail = '') {
+  moodState.kind = kind
+  moodState.ts = Date.now()
+  moodState.detail = String(detail || '').slice(0, 120)
+}
+
 function restoreLastTurn(saved) {
   const list = saved && Array.isArray(saved.turns) ? saved.turns : []
   const last = list.length ? list[list.length - 1] : null
@@ -497,6 +510,24 @@ function handleBillingEvent(session, event) {
     if (!d || typeof d !== 'object') return
     // 提问 / 授权 / 轮次边界：与记账共用同一条事件流，先记挂起态再算钱
     noteWaitEvent(sid, type, d)
+    // D5：女巫三工具被调用 / 出结果 → 记一笔，前端 live 轮询看到 seq 变大就有反应。
+    // 并进这条唯一的 session/event 监听，不再单挂一条（单槽 mock 与早期宿主更稳）。
+    if (type === 'tool/call' && typeof d.name === 'string' && d.name.indexOf('sorceress_') === 0) {
+      let spread = ''
+      try {
+        const args = typeof d.arguments === 'string' ? JSON.parse(d.arguments) : d.arguments
+        spread = String((args && args.spread) || (d.name === 'sorceress_horoscope' ? 'horoscope' : 'daily'))
+      } catch (error) { /* 坏参数不影响留痕 */ }
+      srsToolState = { seq: srsToolState.seq + 1, name: d.name, ts: Date.now(), spread, cards: 0, ok: false }
+    } else if (type === 'tool/result') {
+      const nm = String(d.name || d.toolName || (d.message && d.message.name) || '')
+      if (nm.indexOf('sorceress_') === 0) {
+        const isErr = !!(d.error || (d.message && d.message.isError))
+        srsToolState = Object.assign({}, srsToolState, { ts: Date.now(), ok: !isErr })
+        if (isErr) markMood('error', nm + ' 没跑成')
+      }
+      if (d.error) markMood('error', String((d.error && d.error.code) || '工具出错'))   // D3：任意工具报错她皱眉
+    }
     // 会话标题：只作按会话统计的显示名，不进账
     if (type === 'session/title') {
       const t = String(d.title === undefined ? '' : d.title).trim()
@@ -663,6 +694,9 @@ function liveView() {
       : null,
     busy: runningAgents > 0,
     busySince,
+    // D3 情绪态 + D5 女巫工具留痕：前端按 mood.ts / srsTool.seq 的变化触发一次反应
+    mood: { kind: moodState.kind, ts: moodState.ts, detail: moodState.detail },
+    srsTool: { seq: srsToolState.seq, name: srsToolState.name, ts: srsToolState.ts, spread: srsToolState.spread, ok: srsToolState.ok },
     peak: { peak: peak.peak, label: peak.label, nextInMs: peak.nextInMs },
     at: now,
   }
@@ -783,7 +817,7 @@ function applyBalanceToLedger(led, balance) {
   return led
 }
 
-export const inject = ['webServer']
+export const inject = ['webServer', 'tools']
 
 
 function readVersion() {
@@ -839,6 +873,35 @@ function resolveCard(rel) {
 function sendJson(res, body, status) {
   res.writeHead(status || 200, JSON_HEADERS)
   res.end(JSON.stringify(body))
+}
+
+// 读 POST body：限 8KB，够一句对话；超时/超限直接判坏请求
+function readBody(req, limit = 8192) {
+  return new Promise((resolve, reject) => {
+    let size = 0
+    const chunks = []
+    req.on('data', (c) => {
+      size += c.length
+      if (size > limit) { reject(new Error('too large')); req.destroy(); return }
+      chunks.push(c)
+    })
+    req.on('end', () => resolve(Buffer.concat(chunks).toString('utf8')))
+    req.on('error', reject)
+  })
+}
+
+// D6：造一条 user 消息。优先用宿主官方 createUserMessage（带 id/冻结），
+// bare import 在某些装载方式下解析不到时，手造同形对象兜底（inbox 只存引用，不强求工厂）。
+async function makeUserMessage(text) {
+  const content = [{ type: 'text', text }]
+  try {
+    const llm = await import('@deepseek-ai/dsh-llm')
+    if (llm && typeof llm.createUserMessage === 'function') {
+      return llm.createUserMessage({ content, source: { kind: 'user' } })
+    }
+  } catch (error) { /* 落到手造 */ }
+  const id = 'srs-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 10)
+  return Object.freeze({ id, role: 'user', content, source: { kind: 'user' } })
 }
 
 function serveCard(req, res) {
@@ -922,6 +985,12 @@ function serveAmb(req, res) {
 }
 
 export function apply(ctx) {
+  // D1/D2/D7：注册三个 agent 工具。老宿主没有 tools 服务时静默跳过，路由与挂件照常工作。
+  ctx.effect(() => {
+    const disposers = registerSorceressTools(ctx)
+    return () => { for (const off of disposers) { try { if (typeof off === 'function') off() } catch (error) { /* 卸载容错 */ } } }
+  })
+
   ctx.effect(() => ctx.webServer.register({
     kind: 'exact',
     path: '/srs/ping.json',
@@ -1127,6 +1196,57 @@ export function apply(ctx) {
     },
   }))
 
+  // D6 面板内对话入口：前端把一句话 POST 进来，宿主塞进当前会话的下一轮并唤起 agent。
+  // 服务用 ctx.get 动态取，取不到就回明确错误 —— 不静态注入，老宿主少服务也不会把整个插件 park 住。
+  ctx.effect(() => ctx.webServer.register({
+    kind: 'exact',
+    path: '/srs/chat-prompt',
+    handler: async (req, res) => {
+      if (String(req.method || '').toUpperCase() !== 'POST') {
+        sendJson(res, { ok: false, error: 'only POST' }, 405)
+        return
+      }
+      let payload
+      try {
+        payload = JSON.parse(await readBody(req))
+      } catch (error) {
+        sendJson(res, { ok: false, error: '请求体不是合法 JSON' }, 400)
+        return
+      }
+      // 面板「送进对话」：一句话通常很短，但「把整段解读送进对话」会带 6–8 段富解读，
+      // 上限放宽到 12000 字（够凯尔特十张全文），仍做长度截断防滥用。
+      const text = String((payload && payload.text) || '').trim().slice(0, 12000)
+      if (!text) { sendJson(res, { ok: false, error: '没有要发送的话' }, 400); return }
+      try {
+        const agents = typeof ctx.get === 'function' ? ctx.get('agents') : null
+        const sessions = typeof ctx.get === 'function' ? ctx.get('sessions') : null
+        if (!agents || typeof agents.get !== 'function') {
+          sendJson(res, { ok: false, code: 'NO_AGENTS', error: '宿主没有 agents 服务，面板对话不可用' }, 503)
+          return
+        }
+        // 目标会话：前端给的 sessionId 优先；没有就取最近一个活会话
+        let sid = String((payload && payload.sessionId) || '').trim()
+        let agent = sid ? agents.get(sid) : null
+        if (!agent && sessions && typeof sessions.list === 'function') {
+          const all = sessions.list()
+          const last = all && all.length ? all[all.length - 1] : null
+          if (last && last.id) { sid = String(last.id); agent = agents.get(sid) }
+        }
+        if (!agent || typeof agent.followup !== 'function') {
+          sendJson(res, { ok: false, code: 'NO_SESSION', error: '没有可投递的活会话，先在主界面开一个对话' }, 409)
+          return
+        }
+        const msg = await makeUserMessage(text)
+        // followup：进 next-turn 收件箱并唤醒驱动，等价于用户在输入框发了一句
+        agent.followup(msg)
+        markMood('working', '面板来话')
+        sendJson(res, { ok: true, sessionId: sid, delivered: true, at: Date.now() })
+      } catch (error) {
+        sendJson(res, { ok: false, code: 'THROW', error: '对话投递失败：' + String((error && error.message) || error).slice(0, 160) }, 500)
+      }
+    },
+  }))
+
   // 会话事件：逐轮聚合 usage（宿主事件契约：assistant/message · compaction/summary · turn/end）
   ctx.effect(() => {
     if (typeof ctx.on !== 'function') return undefined
@@ -1134,15 +1254,19 @@ export function apply(ctx) {
     const offDisposed = ctx.on('session/disposed', (session) => {
       if (session && session.id) turnAggs.delete(String(session.id))
     })
-    // 忙碌态：只在有活的时候冒「干活中」，气泡文案由前端决定
+    // D3 情绪态走 agent/status（与 session/event 不同事件，单槽 mock 不会互相顶）
     const offStatus = ctx.on('agent/status', (payload) => {
       const status = payload && payload.status
       if (status === 'running') {
         runningAgents += 1
         if (!busySince) busySince = Date.now()
+        markMood('working')                       // D3：开工
       } else if (status === 'idle') {
         runningAgents = Math.max(0, runningAgents - 1)
-        if (!runningAgents) busySince = 0
+        if (!runningAgents) {
+          busySince = 0
+          markMood('done')                        // D3：收工
+        }
       }
     })
     return () => {
@@ -1154,4 +1278,4 @@ export function apply(ctx) {
 }
 
 // 给测试用：不启服务也能验路由表
-export const _internal = { CARD_RE, VERSION, routeQuery }
+export const _internal = { CARD_RE, VERSION, routeQuery, moodState: () => moodState, srsToolState: () => srsToolState }

@@ -126,21 +126,21 @@ ok("每张牌两套图都在", all(
 
 poses_dir = os.path.join(ASSETS, "sorceress")
 pose_files = [f for f in os.listdir(poses_dir) if f.endswith(".webp")]
-ok("立绘 19 张", len(pose_files) == 19, len(pose_files))
-ok("UI 素材 7 件", count(os.path.join(ASSETS, "ui"), ".webp") == 7, count(os.path.join(ASSETS, "ui"), ".webp"))
+ok("立绘 18 张", len(pose_files) == 18, len(pose_files))
+ok("UI 素材 8 件", count(os.path.join(ASSETS, "ui"), ".webp") == 8, count(os.path.join(ASSETS, "ui"), ".webp"))
 amb = sorted(f for f in os.listdir(os.path.join(ASSETS, "sfx")) if f.startswith("amb-"))
 ok("音景 8 路", len(amb) == 8, amb)
 
 # 模板里声明的 pose / sfx / ui 是否都有文件
 tpl = open(os.path.join(SRC, "client.template.js"), encoding="utf-8").read()
 pose_tokens = re.findall(r"'__POSE_([A-Z0-9_]+)__'", tpl)
-ok("模板声明 19 个立绘占位符", len(pose_tokens) == 19, len(pose_tokens))
+ok("模板声明 18 个立绘占位符", len(pose_tokens) == 18, len(pose_tokens))
 sfx_tokens = re.findall(r"'__SFX_([A-Z0-9_]+)__'", tpl)
 ok("模板声明 8 路一次性音效", len(sfx_tokens) == 8, sfx_tokens)
 sfx_names = [t.lower() + ".mp3" for t in sfx_tokens]
 ok("一次性音效文件都在", all(os.path.exists(os.path.join(ASSETS, "sfx", n)) for n in sfx_names), [n for n in sfx_names if not os.path.exists(os.path.join(ASSETS, "sfx", n))])
 ui_tokens = re.findall(r"'__UI_([A-Z0-9_]+)__'", tpl)
-ok("UI 占位符 7 个", len(ui_tokens) == 7, ui_tokens)
+ok("UI 占位符 8 个", len(ui_tokens) == 8, ui_tokens)
 
 # 音景八路与宿主白名单一致
 host = open(os.path.join(PLUGIN, "index.js"), encoding="utf-8").read()
@@ -191,7 +191,7 @@ ok("plugin/assets 牌数一致", count(os.path.join(PLUGIN, "assets", "cards", "
 client = open(os.path.join(PLUGIN, "client.js"), encoding="utf-8").read()
 version = load(os.path.join(PLUGIN, "package.json"))["version"]
 ok("产物版本 = package.json", ("srs-style-" + version.replace(".", "_")) in client or version in client, version)
-ok("19 张立绘已内联", client.count("data:image/webp;base64") >= 19 + 7, client.count("data:image/webp;base64"))
+ok("18 张立绘已内联", client.count("data:image/webp;base64") >= 18 + 7, client.count("data:image/webp;base64"))
 ok("8 路音效已内联", client.count("data:audio/mpeg;base64") == 8, client.count("data:audio/mpeg;base64"))
 ok("产物不含未替换占位符", not re.search(r"__[A-Z_]+__", client))
 

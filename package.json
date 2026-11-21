@@ -1,7 +1,7 @@
 {
   "name": "dsh-sorceress-widget",
-  "version": "0.56.0",
-  "description": "右下角会说话的塔罗女巫 Sorceress：抽塔罗、看每日星座、记情绪、查计费账单。素材内联；外网只走余额接口，磁盘只写一份用量账本。",
+  "version": "0.59.0",
+  "description": "A witch in the corner of DSH: 7 position-aware tarot spreads (multi-card spreads require a question) with rich readings, a daily horoscope from real moon phase and three retrogrades, a mood diary with wish jar and breathing break, 13 auto-rotating standing poses, an encrypted archive for bazi, cycle and compatibility, plus a usage-bill panel. All assets inlined, no external process. / DSH 角上的塔罗女巫：7 种牌阵（多张牌阵必写「所问」）带位置含义与富解读、今日星座（真月相 + 水金火逆行 + 可存图）、心情与许愿瓶与缓一缓、13 张站姿自动轮转、加密档案（四柱 / 周期 / 婚配）、计费账单与月相提醒。素材全内联，不依赖外部进程。",
   "type": "module",
   "private": true,
   "license": "MIT",
@@ -9,15 +9,18 @@
     "build": "python build.py",
     "build:client": "python build.py --no-assets",
     "test:routes": "node plugin/test-routes.mjs",
+    "test:engine": "node plugin/test-engine.mjs",
     "test:billing": "node test-billing.mjs",
     "test:panel": "python tools/live-harness/run_panel.py",
     "test:static": "node tools/checks/static_scan.mjs",
+    "test:scope": "node tools/checks/client_scope.mjs",
+    "test:audit": "node tools/checks/audit_data.mjs && node tools/checks/audit_draw.mjs && node tools/checks/audit_parity.mjs && node tools/checks/audit_algo.mjs && node tools/checks/audit_text.mjs && node tools/checks/audit_store.mjs && node tools/checks/audit_pose.mjs && node tools/checks/audit_question.mjs && node tools/checks/audit_hepan.mjs && node tools/checks/audit_release.mjs",
     "test:algo": "node tools/checks/algo_assert.mjs",
     "test:data": "python tools/checks/data_integrity.py",
     "test:host": "node tools/checks/host_events.mjs",
     "test:deep": "python tools/live-harness/deep_checks.py",
     "verify": "node plugin/test-routes.mjs && node test-billing.mjs",
-    "verify:deep": "node tools/checks/static_scan.mjs && node tools/checks/algo_assert.mjs && node tools/checks/host_events.mjs && python tools/checks/data_integrity.py"
+    "verify:deep": "node tools/checks/client_scope.mjs && node tools/checks/audit_data.mjs && node tools/checks/audit_parity.mjs && node tools/checks/static_scan.mjs && node tools/checks/algo_assert.mjs && node tools/checks/host_events.mjs && python tools/checks/data_integrity.py"
   },
   "repository": {
     "type": "git",
@@ -26,5 +29,17 @@
   "homepage": "https://github.com/cococo1ng/dsh-sorceress-widget#readme",
   "bugs": {
     "url": "https://github.com/cococo1ng/dsh-sorceress-widget/issues"
-  }
+  },
+  "keywords": [
+    "dsh",
+    "dsh-plugin",
+    "deepseek-harness",
+    "widget",
+    "tarot",
+    "horoscope",
+    "moon-phase",
+    "journal",
+    "bazi",
+    "bill"
+  ]
 }

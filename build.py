@@ -35,7 +35,6 @@ OUT_DSH = os.path.join(PLUGIN, "client.js")
 # 姿态 → 立绘文件（assets/sorceress/ 下）
 TOKENS = {
     "__POSE_IDLE_A__": "sorceress-idle-a.webp",
-    "__POSE_IDLE_B__": "sorceress-idle-b.webp",
     "__POSE_THINK__": "sorceress-think.webp",
     "__POSE_DAZED__": "sorceress-dazed.webp",
     "__POSE_SHUFFLE__": "sorceress-shuffle.webp",
@@ -61,6 +60,8 @@ TOKENS = {
     "__UI_CORNER_BL__": "ui/corner-bl.webp",
     "__UI_CORNER_BR__": "ui/corner-br.webp",
     "__UI_ORB__": "ui/orb.webp",
+    # 运势卡导出背景：深蓝星夜无缝纹理（1080×1080 webp，约 107KB，只在导出时当底图用）
+    "__UI_HORO_BG__": "ui/horo-bg.webp",
     # 音效（assets/sfx/，脚本合成，内联成 data URI）
     "__SFX_SHUFFLE__": "sfx/shuffle.mp3",
     "__SFX_FLIP__": "sfx/flip.mp3",
@@ -242,7 +243,7 @@ def inject_data(template):
     内联之后面板不依赖任何路由，改文案只需重载页面（不必重启宿主）。
     牌面图太大不内联，仍走 /srs/cards 前缀路由。
     """
-    for token, name in (("__DECK_JSON__", "deck.json"), ("__TAROT_JSON__", "tarot.json"), ("__HORO_JSON__", "horoscope.json"), ("__EMPATHY_JSON__", "empathy.json")):
+    for token, name in (("__DECK_JSON__", "deck.json"), ("__TAROT_JSON__", "tarot.json"), ("__TAROT_RICH_JSON__", "tarot-rich.json"), ("__HORO_JSON__", "horoscope.json"), ("__EMPATHY_JSON__", "empathy.json")):
         path = os.path.join(DATA, name)
         if not os.path.exists(path):
             fail("缺数据文件：" + name)

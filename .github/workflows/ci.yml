@@ -36,7 +36,7 @@ jobs:
           python build.py --no-assets
           git diff --exit-code -- plugin/client.js
 
-      - name: 路由 44 项
+      - name: 路由 57 项
         run: node plugin/test-routes.mjs
 
       - name: 账本口径
@@ -50,6 +50,25 @@ jobs:
 
       - name: 宿主边界
         run: node tools/checks/host_events.mjs
+
+      - name: 客户端作用域
+        run: node tools/checks/client_scope.mjs
+
+      # 十套审计：数据 / 抽牌链 / 客户端↔宿主一致性 / 算法 / 文案 / 状态 /
+      #           姿态轮换 / 所问必填 / 发布件一致性 / 合婚对拍
+      # 合婚对拍依赖同级仓库 dsh-kuitan-tianji；CI 上没有时脚本自行跳过（退出码 0）
+      - name: 十套审计
+        run: |
+          node tools/checks/audit_data.mjs
+          node tools/checks/audit_draw.mjs
+          node tools/checks/audit_parity.mjs
+          node tools/checks/audit_algo.mjs
+          node tools/checks/audit_text.mjs
+          node tools/checks/audit_store.mjs
+          node tools/checks/audit_pose.mjs
+          node tools/checks/audit_question.mjs
+          node tools/checks/audit_release.mjs
+          node tools/checks/audit_hepan.mjs
 
       - name: 数据完整性
         run: python tools/checks/data_integrity.py

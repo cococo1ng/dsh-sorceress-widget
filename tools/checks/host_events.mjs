@@ -263,7 +263,9 @@ const usage = (o) => ({ inputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0,
 {
   const h = await boot(mkHome(), 'routes')
   const ping = (await h.json('/srs/ping.json')).body
-  ok('ping：19 张立绘 / 78 张牌 / 版本一致', ping.poses === 19 && ping.cards === 78 && ping.version === JSON.parse(fs.readFileSync(path.join(PLUGIN, 'package.json'), 'utf8')).version, ping)
+  // 立绘张数按目录实数比对，不写死——加减立绘时这条不会假红
+  const poseCount = fs.readdirSync(path.join(PLUGIN, 'assets', 'sorceress')).filter((f) => f.endsWith('.webp')).length
+  ok('ping：' + poseCount + ' 张立绘 / 78 张牌 / 版本一致', ping.poses === poseCount && ping.cards === 78 && ping.version === JSON.parse(fs.readFileSync(path.join(PLUGIN, 'package.json'), 'utf8')).version, ping)
   for (const bad of ['/srs/cards/big/../../index.js', '/srs/cards/%2e%2e/%2e%2e/index.js', '/srs/cards/big/x.webp', '/srs/cards/', '/srs/cards/back.webp/../../x']) {
     const r = await h.call(bad)
     ok('穿越/异常路径 404：' + bad, r.status === 404, r.status)

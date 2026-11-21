@@ -53,5 +53,5 @@ npm view dsh-sorceress-widget dist-tags --registry=https://registry.npmjs.org
 
 ## 版本号约定
 
-- 改前端 → patch；加功能 → minor。当前 `0.56.0`。
+- 改前端 → patch；加功能 → minor。上次发布 `0.56.0`，本地已到 `0.59.0`（尚未发布）。
 - 发版顺序固定：改 `plugin/package.json` → `python build.py` → 跑自检 → 提交 + tag → GitHub Release → npm。

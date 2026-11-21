@@ -14,8 +14,10 @@ import fs from 'node:fs'
 const pkgVersion = JSON.parse(fs.readFileSync(new URL('./package.json', import.meta.url), 'utf8')).version
 
 const routes = new Map()
+const registeredTools = []
 const ctx = {
   effect(fn) { const off = fn(); return () => { if (typeof off === 'function') off() } },
+  get() { return undefined },   // 默认无 agents/sessions：D6 路由应回 503 而非炸
   webServer: {
     register(route) {
       const key = route.kind + ' ' + route.path
@@ -24,6 +26,16 @@ const ctx = {
       return () => routes.delete(key)
     },
   },
+  // D1/D2/D7：假工具注册表，只收集定义不执行
+  tools: {
+    register(def) {
+      if (!def || !def.name || typeof def.execute !== 'function') throw new Error('工具定义不合法')
+      if (typeof def.output?.render !== 'function') throw new Error('工具缺 output.render')
+      registeredTools.push(def)
+      return () => { const i = registeredTools.indexOf(def); if (i >= 0) registeredTools.splice(i, 1) }
+    },
+  },
+  on() { return () => {} },
 }
 
 apply(ctx)
@@ -137,6 +149,67 @@ for (const bad of ['/srs/sfx/amb-nope.mp3', '/srs/sfx/../index.js', '/srs/sfx/am
 }
 const ambHead = await call('/srs/sfx/amb-fire.mp3', 'HEAD')
 ok('音景 HEAD 200 且无 body', ambHead.status === 200 && ambHead.body === null)
+
+// ⑧ D1/D2/D7：三个 agent 工具注册成功，且能真实执行（经 srs-engine）
+const toolNames = registeredTools.map((t) => t.name).sort()
+ok('注册三个 sorceress 工具', JSON.stringify(toolNames) === JSON.stringify(['sorceress_daily', 'sorceress_draw', 'sorceress_horoscope']), toolNames)
+const drawTool = registeredTools.find((t) => t.name === 'sorceress_draw')
+const drawRes = await drawTool.execute({ spread: 'three', question: '工作去向', seed: 42 }, {})
+ok('sorceress_draw 出三张', drawRes.cards.length === 3 && drawRes.spread === 'three')
+ok('sorceress_draw 回显 seed 与文本', drawRes.seed === 42 && drawRes.text.includes('【过去现在未来】'))
+const drawAgain = await drawTool.execute({ spread: 'three', question: '工作去向', seed: 42 }, {})
+ok('sorceress_draw 同种子可复现', JSON.stringify(drawRes.cards.map((c) => c.card.id)) === JSON.stringify(drawAgain.cards.map((c) => c.card.id)))
+ok('sorceress_draw render 出文本块', drawTool.output.render({}, drawRes)[0].type === 'text')
+
+// 所问必填：多张牌阵空着要拒，单张放行（与客户端同一口径）
+let drawRejected = false
+try { await drawTool.execute({ spread: 'three' }, {}) } catch (error) { drawRejected = String(error.message).includes('question') }
+ok('sorceress_draw 多张牌阵空所问被拒', drawRejected)
+let oneAllowed = null
+try { oneAllowed = await drawTool.execute({ spread: 'one' }, {}) } catch (error) { oneAllowed = null }
+ok('sorceress_draw 单张空所问放行', !!oneAllowed && oneAllowed.cards.length === 1)
+const dailyTool = registeredTools.find((t) => t.name === 'sorceress_daily')
+const dailyRes = await dailyTool.execute({ kind: 'card', date: '2026-11-21' }, {})
+ok('sorceress_daily 当天恒定字段齐', dailyRes.day === '2026-11-21' && dailyRes.card && dailyRes.text)
+const horoTool = registeredTools.find((t) => t.name === 'sorceress_horoscope')
+const horoRes = await horoTool.execute({ sign: 'libra', date: '2026-11-21' }, {})
+ok('sorceress_horoscope 四维 + 文本', horoRes.domains.length === 4 && horoRes.text.includes('天秤座'))
+
+// ⑨ D6 面板对话路由：无 agents 服务时回 503（mock ctx.get 恒为 undefined）
+const chatRoute = routes.get('exact /srs/chat-prompt')
+ok('chat-prompt 路由已注册', !!chatRoute)
+async function post(pathname, body) {
+  const route = routes.get('exact ' + pathname)
+  return new Promise((resolve) => {
+    const out = { status: 0, headers: {}, chunks: [] }
+    const res = {
+      writeHead(s, h) { out.status = s; Object.assign(out.headers, h || {}) },
+      end(chunk) { out.body = chunk === undefined ? null : chunk; resolve(out) },
+    }
+    const payload = body === undefined ? '' : JSON.stringify(body)
+    const handlers = {}
+    const req = {
+      method: 'POST', url: pathname,
+      on(ev, fn) { handlers[ev] = fn },
+      destroy() {},
+    }
+    setImmediate(() => {
+      if (handlers.data && payload) handlers.data(Buffer.from(payload, 'utf8'))
+      if (handlers.end) handlers.end()
+    })
+    const r = route.handler(req, res)
+    if (r && r.then) r.catch(() => resolve({ status: 599, body: 'rejected' }))
+  })
+}
+const noAgent = await post('/srs/chat-prompt', { text: '你好' })
+ok('无 agents 服务回 503', noAgent.status === 503 && JSON.parse(noAgent.body).code === 'NO_AGENTS', noAgent.status)
+const emptyText = await post('/srs/chat-prompt', { text: '   ' })
+ok('空话回 400', emptyText.status === 400)
+const badMethod = await new Promise((resolve) => {
+  const out = { status: 0 }
+  chatRoute.handler({ method: 'GET', url: '/srs/chat-prompt' }, { writeHead(s) { out.status = s }, end() { resolve(out) } })
+})
+ok('GET 被拒 405', badMethod.status === 405)
 
 console.log('\n通过 ' + pass + ' 项' + (process.exitCode ? '（有失败）' : '，全绿'))
 

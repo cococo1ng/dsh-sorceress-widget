@@ -15,7 +15,6 @@ window.__ModuleLoader__.load({
     // ── 立绘（build.py 内联成 data URI）─────────────────────────────
     const POSES = {
       'idle-a': '__POSE_IDLE_A__',
-      'idle-b': '__POSE_IDLE_B__',
       'think': '__POSE_THINK__',
       'dazed': '__POSE_DAZED__',
       'shuffle': '__POSE_SHUFFLE__',
@@ -47,6 +46,8 @@ window.__ModuleLoader__.load({
       cornerBL: '__UI_CORNER_BL__',
       cornerBR: '__UI_CORNER_BR__',
       orb: '__UI_ORB__',
+      // 运势卡导出底图：深蓝星夜无缝纹理（1080×1080），仅导出时用
+      horoBg: '__UI_HORO_BG__',
     };
     // 「关于」页的两张码：build.py 内联成 data URI（与立绘同一套，离线可用、不发请求）
     const ABOUT_IMG = { qq: '__ABOUT_QQ__', tip: '__ABOUT_TIP__' };
@@ -118,12 +119,76 @@ window.__ModuleLoader__.load({
     };
 
     // 姿态的中文名（配置页「人物」块用；键与 POSES 一致）
+    // 这里必须覆盖 POSES 的全部键，漏一个那张立绘就既不能定格、也不会被自动轮到
     const POSE_LABEL = {
       'idle-a': '静立', think: '想事', dazed: '发呆', shuffle: '洗牌', spread: '摊牌',
       draw: '抽牌', flip: '翻牌', smile: '笑', sleep: '打盹', smirk: '得意', fly: '骑帚',
       reading: '读牌', annoyed: '不高兴', bye: '告别',
       'rest-hands': '静候', 'look-aside': '远望', 'hold-cup': '捧杯', stretch: '伸腰',
     };
+
+    // 自动站姿池：除「抽牌流程四张（洗牌/摊牌/抽牌/翻牌）」与「打盹」外，其余 13 张全进池。
+    // 流程姿势由抽牌事件驱动、打盹有自己的触发，混进随机池会把她从流程里硬拽出来。
+    const STAND_POSES = [
+      'idle-a', 'rest-hands', 'think', 'look-aside', 'dazed',
+      'hold-cup', 'stretch', 'reading', 'smile', 'smirk', 'annoyed', 'fly', 'bye',
+    ];
+
+    // 洗牌袋轮转：一轮内每张只出一次，出完才重洗。
+    // 原来是有放回随机（每次从 11 张里抽），实测会反复抽到同几张，
+    // 看起来就是「只在固定的几个之间循环」。
+    function shuffleBag(list) {
+      const a = list.slice();
+      for (let i = a.length - 1; i > 0; i -= 1) {
+        const j = Math.floor(Math.random() * (i + 1));
+        const t = a[i]; a[i] = a[j]; a[j] = t;
+      }
+      return a;
+    }
+    // 自动轮换的守卫条件（抽出来是为了能单测真值表）：
+    // 固定姿态时不换；面板开着 / 拖拽 / 打盹 / 正在流程姿势时不换。
+    function canRotatePose(s) {
+      return !s.pinned && !s.panelOpen && !s.dragging && !s.napping && s.pose === s.home;
+    }
+    // 轮换间隔：默认 4–8 分钟随机；测试可用 window.__srsPoseIntervalMs 加速（不影响生产默认）
+    function poseIntervalMs() {
+      const o = typeof window !== 'undefined' ? Number(window.__srsPoseIntervalMs) : NaN;
+      return Number.isFinite(o) && o > 0 ? o : 240000 + Math.random() * 240000;
+    }
+
+    // 「所问」是否必填：单张与每日一牌不强制（本来就是随手看一眼），
+    // 多张牌阵强制——不然 7 张、10 张牌没有焦点的解读全是空话。
+    const NEED_QUESTION = { three: true, five: true, relation: true, celtic: true, either: true };
+    function needQuestion(spreadKey) {
+      const mode = spreadKey === 'daily' ? 'one' : spreadKey;
+      return !!NEED_QUESTION[mode];
+    }
+    // 统一的校验函数：返回 '' 表示通过，否则返回给用户看的一句话
+    function questionError(spreadKey, raw) {
+      if (!needQuestion(spreadKey)) return '';
+      return String(raw || '').trim() ? '' : '先写一句你要问的事，再来抽。';
+    }
+
+    // 从池里随机挑一张，且尽量避开「当前正在显示的那张」——
+    // 否则小动作可能抽到和基线相同的姿势，看起来像「换了等于没换」。
+    function pickAvoiding(list, current) {
+      if (!list || !list.length) return current;
+      if (list.length === 1) return list[0];
+      const pool = list.filter((k) => k !== current);
+      const from = pool.length ? pool : list;
+      return from[Math.floor(Math.random() * from.length)];
+    }
+
+    // 取下一张：bag 为该轮还没出的队列；队列空了就重洗，
+    // 且保证新一轮第一张不等于 current（否则「换了等于没换」）
+    function drawStandPose(bag, current) {
+      const queue = Array.isArray(bag) ? bag.slice() : [];
+      if (queue.length) return { pose: queue[0], bag: queue.slice(1) };
+      const fresh = shuffleBag(STAND_POSES);
+      if (fresh.length > 1 && fresh[0] === current) fresh.push(fresh.shift());
+      return { pose: fresh[0], bag: fresh.slice(1) };
+    }
+
 
     // W19 环境音景：八套真实录音循环（Mixkit Free License），走 /srs/sfx 路由（不内联，省包体）
     const AMB = {
@@ -144,6 +209,8 @@ window.__ModuleLoader__.load({
     // 牌库与判词：build.py 从 data/*.json 内联（立项书 §5「一切数据内置」）
     const DECK = __DECK_JSON__;
     const TAROT = __TAROT_JSON__;
+    // 逐张富数据（core/element/astro/image，来自 kuitan RWS 库）；只用于富解读呈现，不参与抽牌
+    const TAROT_RICH = __TAROT_RICH_JSON__;
     const HORO = __HORO_JSON__;
     const EMPATHY = __EMPATHY_JSON__;
 
@@ -159,7 +226,7 @@ window.__ModuleLoader__.load({
       corner: 'br',
       bubbleMs: 6000,
       sound: {
-        on: false,
+        on: true,
         volume: 55,
         tracks: { shuffle: true, flip: true, draw: true, bell: true, collect: true, cost: true, ask: true, approve: true },
       },
@@ -171,17 +238,21 @@ window.__ModuleLoader__.load({
       talk: 'normal',
       // 人物姿态：空 = 自动（闲置换姿势）；非空 = 固定成这一张（说话照旧，不再自己换）
       posePin: '',
-      // C8 每日一牌提醒：到点看一眼今天抽没抽，没抽就冒一句。默认关，不打扰
-      remind: { on: false, hh: 21, mm: 0 },
+      // C8 每日一牌提醒：到点看一眼今天抽没抽，没抽就冒一句
+      // moon：W5 月相提醒（只在朔望当天开口）
+      remind: { on: true, hh: 21, mm: 0, moon: true },
       // 计费提醒（仿青云剑仙）：余额告急阈值 / 今日预算，0 = 关；两种每天各只说一次
-      bill: { warnLow: 10, budget: 0, lowNotice: true },
-      // W19 环境音景：四套可分层混音（走路由，不内联）。默认全关，别一装就响
-      amb: { on: false, volume: 45, tracks: { rain: false, fire: false, wind: false, pages: false } },
+      bill: { warnLow: 5, budget: 10, lowNotice: true },
+      // W19 环境音景：四套可分层混音（走路由，不内联）
+      amb: { on: true, volume: 60, tracks: { rain: false, fire: false, wind: false, pages: false } },
       reversed: true,
       spread: 'daily',
+      direction: 'general',                  // 询问方向：只影响解读侧重，不影响抽牌随机
       detail: 'brief',                       // T14 牌义详略：brief 简三句 / full 全文
       anchor: { h: 'right', v: 'bottom' },   // 吸附边：left/right + top/bottom，null = 自由
       onlyPanel: false,                      // 只留水晶球：人物收起来（C4）
+      // D3 会话联动：开工/收工/报错她换姿势冒一句；D5 女巫工具被调用时翻牌反应
+      react: { mood: true, tool: true },
     };
 
     function loadCfg() {
@@ -207,13 +278,19 @@ window.__ModuleLoader__.load({
         const rm = parseInt(cfg.remind.mm, 10);
         cfg.remind.hh = (rh >= 0 && rh <= 23) ? rh : 21;
         cfg.remind.mm = (rm >= 0 && rm <= 59) ? rm : 0;
+        // W5 月相提醒开关：老存档没有这个键，补 false（不打扰是默认）
+        cfg.remind.moon = cfg.remind.moon === true;
         // 计费提醒：阈值与预算都收成 0–10000 的整数元，手改坏了也不至于把界面算崩
         cfg.bill = Object.assign({}, DEFAULT_CFG.bill, cfg.bill || {});
         const wl = parseInt(cfg.bill.warnLow, 10);
         const bg = parseInt(cfg.bill.budget, 10);
-        cfg.bill.warnLow = (wl >= 0 && wl <= 10000) ? wl : 10;
-        cfg.bill.budget = (bg >= 0 && bg <= 10000) ? bg : 0;
+        cfg.bill.warnLow = (wl >= 0 && wl <= 10000) ? wl : DEFAULT_CFG.bill.warnLow;
+        cfg.bill.budget = (bg >= 0 && bg <= 10000) ? bg : DEFAULT_CFG.bill.budget;
         cfg.bill.lowNotice = cfg.bill.lowNotice !== false;
+        // D3/D5 新开关：老存档没有这段，补默认值，别让 undefined 把反应整个关掉
+        cfg.react = Object.assign({}, DEFAULT_CFG.react, (cfg.react || {}));
+        // 底部对话输入框已移除：清掉历史存档里的 chatEntry，避免残留字段
+        if ('chatEntry' in cfg) delete cfg.chatEntry;
         return cfg;
       } catch (error) { return Object.assign({}, DEFAULT_CFG); }
     }
@@ -351,12 +428,19 @@ window.__ModuleLoader__.load({
 
     // mulberry32：同一种子必然同一副顺序，历史里存种子就能复现
     function prng(seed) {
-      let a = seed >>> 0;
+      // 与宿主 srs-engine.mjs / kuitan random.js 逐字一致：把高 32 位与小数位一并折进状态，
+      // 避免「相差 2^32 的种子跑出同一串数」。整数种子的低 32 位仍原样参与。
+      const n = Number(seed);
+      const lo = n >>> 0;
+      const hi = Math.floor(Math.abs(n) / 4294967296) >>> 0;
+      const frac = Math.round((n - Math.trunc(n)) * 4294967296) >>> 0;
+      let a = (lo ^ Math.imul(hi + 1, 0x85EBCA6B) ^ frac) >>> 0;
+      if (!a) a = 0x9E3779B9;
       return function next() {
         a = (a + 0x6D2B79F5) >>> 0;
         let t = a;
-        t = Math.imul(t ^ (t >>> 15), 1 | t);
-        t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+        t = Math.imul(t ^ (t >>> 15), t | 1);
+        t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
         return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
       };
     }
@@ -402,7 +486,7 @@ window.__ModuleLoader__.load({
     const STYLE_ID = 'srs-style-' + String(VERSION).replace(/[^\w]/g, '_');
 
     function ensureStyle() {
-      if (document.getElementById(STYLE_ID)) return;
+      // 幂等：样式内容变了就替换（热加载时 DOM 已是新版、旧 <style> 还在，只跳过会留下旧规则）
       const css = [
         '.srs-root{position:fixed;z-index:60;pointer-events:none;-webkit-user-select:none;user-select:none;',
         'touch-action:none;',
@@ -551,8 +635,8 @@ window.__ModuleLoader__.load({
         '.srs-about li{margin-bottom:2px}',
         '.srs-about b{color:var(--srs-gold-lit);font-weight:600}',
         '.srs-about-sep{height:1px;margin:14px 0 0;background:linear-gradient(90deg,transparent,rgba(201,164,92,.24),transparent)}',
-        '.srs-about-shot{display:block;margin:8px auto 4px;width:190px;border:1px solid rgba(201,164,92,.45);border-radius:6px;background:#fff}',
-        '.srs-about-shot.tip{width:208px}',
+        // 交流群与赞赏码都用 230px 宽：两张图尺寸一致，等比缩放不变形，手机扫码够清晰
+        '.srs-about-shot{display:block;margin:8px auto 6px;width:230px;border:1px solid rgba(201,164,92,.45);border-radius:6px;background:#fff}',
         '.srs-about-cap{text-align:center;font-size:12px;color:var(--srs-muted);margin:0 0 6px}',
         '.srs-about p.note{font-size:12px;color:var(--srs-muted);margin:0 0 8px}',
         // .srs-btn 的样式统一在样式数组末尾的「底部动作条」块里，这里不再重复定义
@@ -567,7 +651,7 @@ window.__ModuleLoader__.load({
         'background:#121829;border:1px solid var(--srs-gold);border-radius:10px;padding:16px;color:#D6C1A6;',
         'box-shadow:0 22px 50px rgba(0,0,0,.6)}',
         '.srs-card h4{margin:0 0 4px;font-family:var(--srs-serif);font-size:15px;color:#EFE3CB;font-weight:600}',
-        '.srs-card p.tip{margin:0 0 12px;font-size:11px;line-height:1.6;color:#94897A}',
+        '.srs-card p.tip{margin:0 0 12px;font-size:11px;line-height:1.6;color:#B9AC93}',
         '.srs-field{display:flex;align-items:center;justify-content:space-between;gap:10px;margin:8px 0;font-size:12px}',
         '.srs-field input,.srs-field select{font-family:inherit;font-size:12px;padding:4px 6px;color:#EFE3CB;',
         'background:rgba(30,39,64,.85);border:1px solid var(--srs-line);border-radius:4px;max-width:150px}',
@@ -699,6 +783,37 @@ window.__ModuleLoader__.load({
 '.srs-menu-row{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:5px 2px;line-height:1.4}',
 '.srs-menu-row>span{min-width:0;overflow-wrap:break-word}',
 '.srs-seg{display:flex;gap:4px;flex-wrap:wrap;justify-content:flex-end;margin-left:auto}',
+        // 牌阵 7 档会撑满一行：允许整行换行、按钮左对齐，小屏也不挤成一条
+        '.srs-seg-wrap{flex-wrap:wrap;justify-content:flex-start;margin-left:auto;max-width:78%}',
+        '.srs-seg-wrap button{padding:4px 8px;font-size:11.5px}',
+        // ── 塔罗页表单：标签一行 + 控件整行等宽网格（2026-11-21 排版整理）──
+        // 旧版把标签放左、按钮塞右边 78% 窄区，7 个按钮会参差换行；改成三段式纵向排布。
+        '.srs-form{display:flex;flex-direction:column;gap:7px;padding:2px 0 4px}',
+        // 标签色与「许愿瓶」标题一致（金色），不再用灰色
+        '.srs-form-lab{display:flex;align-items:center;gap:5px;font-size:11.5px;color:var(--srs-gold)}',
+        '.srs-form-lab .srs-cap-ic{width:14px;height:14px}',
+        '.srs-form-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:6px}',
+        // 底/边/圆角/纸光/过渡/选中态一律交给下方 .srs-seg/.srs-moods 同族组合规则（单一来源），
+        // 这里只留排版：字号 12px、上下内边距 7px、单行。
+        // ⚠ 不写 line-height：情绪按钮吃浏览器默认 normal（约 14px），写 inherit 会变成 .srs-body 的 20.4px，
+        //   按钮高度就会从 32px 涨到 36.4px —— 这是两边高度不一致的真正原因。
+        '.srs-form-grid button{font-family:inherit;font-size:12px;padding:7px 0;cursor:pointer;',
+        'white-space:nowrap;text-align:center}',
+        '.srs-form input.srs-q-input{width:100%;box-sizing:border-box;background:rgba(10,8,23,.6);color:#EFE3CB;',
+        'border:1px solid rgba(201,164,92,.35);border-radius:6px;font-family:inherit;font-size:12px;padding:8px 9px}',
+        '.srs-form input.srs-q-input::placeholder{color:#94897A}',
+        '.srs-form input.srs-q-input:focus{outline:none;border-color:var(--srs-gold)}',
+        // 所问必填的报错态：边框转红 + 下面一行红字（多张牌阵空着不让抽）
+        '.srs-form input.srs-q-input.is-err{border-color:rgba(217,138,142,.85);',
+        'background:rgba(60,18,24,.42)}',
+        '.srs-form input.srs-q-input.is-err:focus{border-color:#D98A8E}',
+        '.srs-q-err{margin:5px 0 0;font-size:11px;line-height:1.5;color:#D98A8E}',
+        // 富解读块：短摘要常显，展开看全文
+        '.srs-reading{border-top:1px solid rgba(201,164,92,.14);padding-top:9px}',
+        '.srs-reading-cap{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:6px;font-size:11.5px;color:#C7B896}',
+        '.srs-reading-body{font-size:11.5px;line-height:1.7;color:#E4D6BE}',
+        '.srs-reading-body p{margin:0 0 7px}',
+        '.srs-reading-body p:last-child{margin-bottom:0}',
 '.srs-seg button{font-family:inherit;font-size:11px;padding:2px 6px;cursor:pointer;',
         'background:transparent;color:#C9BBA0;border:1px solid var(--srs-line);border-radius:4px}',
 '.srs-seg button.on{border-color:var(--srs-gold-lit);color:#FFF3DA}',
@@ -706,7 +821,7 @@ window.__ModuleLoader__.load({
         'background:transparent;color:#D6C1A6;border:0;padding:5px 2px;border-radius:4px}',
 '.srs-menu-act:hover{background:rgba(201,164,92,.14);color:#FFF3DA}',
 '.srs-menu-sep{height:1px;background:var(--srs-line);margin:6px 0}',
-'.srs-menu-ver{font-size:11px;color:#94897A;padding:4px 2px 0}',
+'.srs-menu-ver{font-size:11px;color:#B9AC93;padding:4px 2px 0}',
 '.srs-div{display:block;width:100%;height:auto;margin:8px 0 2px;opacity:.9;pointer-events:none}',
 
         // ── 视觉重做（2026-11-17 晚）：更紧的字阶、卡片化分块、少描边 ──
@@ -734,7 +849,7 @@ window.__ModuleLoader__.load({
         '.srs-cap-ic .ln{fill:none}',
         // 「牌阵」「历史」这类行内区块标签也配图标，但它们是 flex 行的左半边，
         // 得用 inline-flex 包住图标与文字，不能直接用 .srs-block-cap（那是整行标题）
-        '.srs-row-cap{display:inline-flex;align-items:center;gap:5px;font-size:11.5px;color:#9A907C}',        '.srs-row-cap .srs-cap-ic{width:14px;height:14px}',
+        '.srs-row-cap{display:inline-flex;align-items:center;gap:5px;font-size:11.5px;color:#A89C86}',        '.srs-row-cap .srs-cap-ic{width:14px;height:14px}',
         '.srs-row-cap .srs-cap-ic{stroke:rgba(201,164,92,.85);fill:rgba(201,164,92,.2)}',
         '.srs-empty-ic{display:block;width:44px;height:44px;margin:2px auto 10px;',
         'stroke:rgba(201,164,92,.55);fill:rgba(201,164,92,.14);stroke-width:1.7;',
@@ -742,21 +857,21 @@ window.__ModuleLoader__.load({
         '.srs-empty-ic .ln{fill:none}',
         '.srs-row{display:flex;align-items:baseline;justify-content:space-between;gap:10px;padding:2px 0;flex-wrap:wrap}',
         '.srs-row .k{flex:0 0 auto;white-space:nowrap}',
-        '.srs-row .k{font-size:11.5px;color:#9A907C;white-space:nowrap}',
+        '.srs-row .k{font-size:11.5px;color:#A89C86;white-space:nowrap}',
         '.srs-row .v{font-size:12.5px;color:#E8DDC6;text-align:right}',
         '.srs-note{font-size:12.5px;line-height:1.7;color:#D6C7AA;margin-top:7px}',
         '.srs-dom{display:grid;grid-template-columns:28px 58px 1fr;gap:7px;align-items:baseline;padding:2px 0}',
-        '.srs-dom .k{font-size:11.5px;color:#9A907C}',
+        '.srs-dom .k{font-size:11.5px;color:#A89C86}',
         '.srs-stars{font-size:11px;color:var(--srs-gold-lit);letter-spacing:1px}',
         '.srs-dom-t{font-size:11px;line-height:1.55;color:#B9AC93}',
         '.srs-signs{display:grid;grid-template-columns:repeat(6,1fr);gap:4px;margin-top:9px}',
         '.srs-signs button{font-family:inherit;font-size:10px;padding:2px 0;cursor:pointer;border-radius:5px;',
-        'background:rgba(23,32,56,.7);color:#9A907C;border:1px solid rgba(201,164,92,.14)}',
+        'background:rgba(23,32,56,.7);color:#C0B49A;border:1px solid rgba(201,164,92,.14)}',
         '.srs-signs button.on{color:#F2E6C8;border-color:var(--srs-gold)}',
         '.srs-swatch{height:4px;border-radius:2px;margin-top:9px;opacity:.85}',
         '.srs-witch{font-size:12px;color:#B9AC93;text-align:center;padding:4px 0 2px}',
         '.srs-menu-row{display:flex;align-items:baseline;justify-content:space-between;gap:10px;padding:3px 0}',
-        '.srs-menu-row span:first-child{font-size:11.5px;color:#9A907C}',
+        '.srs-menu-row span:first-child{font-size:11.5px;color:#A89C86}',
         '.srs-menu-sub{font-size:12.5px;color:#E8DDC6;font-variant-numeric:tabular-nums}',
         '.srs-menu-warn{font-size:11.5px;color:#D9A489}',
         // 计费明细搜索框（仿青云剑仙的账本搜索）
@@ -764,7 +879,7 @@ window.__ModuleLoader__.load({
         '.srs-search input{width:100%;box-sizing:border-box;font-family:inherit;font-size:11.5px;color:#EFE3CB;'
         + 'background:rgba(12,18,32,.55);border:1px solid rgba(201,164,92,.22);border-radius:6px;padding:5px 8px;outline:none}',
         '.srs-search input:focus{border-color:rgba(227,197,136,.6)}',
-        '.srs-search input::placeholder{color:#7E7565}',
+        '.srs-search input::placeholder{color:#94897A}',
         '.srs-menu-act{font-size:12.5px;padding:6px 2px;color:#E0D3B8}',
         '.srs-menu-act:hover{background:rgba(201,164,92,.12);color:#FFF3DA}',
         '.srs-seg button{font-size:10.5px;padding:3px 7px;border-radius:5px}',
@@ -777,7 +892,7 @@ window.__ModuleLoader__.load({
         '.srs-len input{width:56px;padding:3px 5px;box-sizing:border-box;font-family:inherit;font-size:12px;',
         'text-align:center;color:#E8DDC6;background:rgba(12,18,34,.8);border:1px solid rgba(201,164,92,.28);',
         'border-radius:5px}',
-        '.srs-len em{font-style:normal;font-size:10.5px;color:#94897A}',
+        '.srs-len em{font-style:normal;font-size:10.5px;color:#A89C86}',
         '.srs-fz{letter-spacing:0;font-family:var(--srs-serif);font-size:12.5px;color:#EFE3CB}',
         '.srs-cal-head{display:flex;align-items:center;justify-content:space-between;gap:8px;margin:10px 0 6px}',
         '.srs-cal-title{font-size:12px;color:var(--srs-gold);letter-spacing:.02em}',
@@ -785,7 +900,7 @@ window.__ModuleLoader__.load({
         'color:var(--srs-gold);background:rgba(12,18,34,.6);border:1px solid rgba(201,164,92,.3);border-radius:5px}',
         '.srs-cal-nav:hover{color:var(--srs-gold-lit)}',
         '.srs-cal{display:grid;grid-template-columns:repeat(7,1fr);gap:3px}',
-        '.srs-cal-w{text-align:center;font-size:10px;color:#8E8474;padding-bottom:2px}',
+        '.srs-cal-w{text-align:center;font-size:10px;color:#A89C86;padding-bottom:2px}',
         '.srs-cal-cell{aspect-ratio:1/1;display:flex;align-items:center;justify-content:center;',
         'font-size:10.5px;border-radius:4px;border:1px solid rgba(201,164,92,.14);color:#C8BBA1;',
         'background:rgba(12,18,34,.55)}',
@@ -798,7 +913,7 @@ window.__ModuleLoader__.load({
         '.srs-cal-cell.st-luteal{background:rgba(110,99,150,.55);border-color:rgba(150,138,190,.5);color:#EDE8F8}',
         '.srs-cal-cell.st-safe{background:rgba(78,127,104,.5);border-color:rgba(116,168,143,.45);color:#E4F1E9}',
         '.srs-cal-legend,.srs-day-legend{display:flex;flex-wrap:wrap;gap:8px 10px;margin-top:8px}',
-        '.srs-lg{display:inline-flex;align-items:center;gap:4px;font-size:10px;color:#A2998A}',
+        '.srs-lg{display:inline-flex;align-items:center;gap:4px;font-size:10px;color:#B9AC93}',
         '.srs-cal-dot{width:8px;height:8px;border-radius:2px;display:block}',
         '.srs-cal-dot.st-period{background:rgba(168,68,75,.85)}',
         '.srs-cal-dot.st-ovu{background:rgba(217,134,60,.9)}',
@@ -809,7 +924,7 @@ window.__ModuleLoader__.load({
         '.srs-days{display:grid;grid-template-columns:repeat(30,1fr);gap:2px;margin:8px 0 6px;height:64px;align-items:end}',
         '.srs-day-cell{position:relative;height:100%;border-radius:2px;background:rgba(255,255,255,.04);overflow:hidden}',
         '.srs-day-cell.is-period{outline:1px solid rgba(214,120,124,.65);outline-offset:-1px}',
-        '.srs-days-axis{display:flex;justify-content:space-between;font-size:10px;color:#8E8474;'
+        '.srs-days-axis{display:flex;justify-content:space-between;font-size:10px;color:#A89C86;'
         + 'margin:-4px 0 6px;font-variant-numeric:tabular-nums}',
         '.srs-day-moon{position:absolute;left:0;right:0;bottom:0;background:rgba(226,214,186,.20);display:block}',
         '.srs-day-mood{position:absolute;left:1px;right:1px;bottom:0;border-radius:2px 2px 0 0;display:block}',
@@ -840,19 +955,29 @@ window.__ModuleLoader__.load({
         '.srs-match-bar i{display:block;height:100%;border-radius:3px;',
         'background:linear-gradient(90deg,rgba(94,127,180,.9),rgba(201,164,92,.95))}',
         '.srs-match-fz{font-family:var(--srs-serif);font-size:11.5px;letter-spacing:.06em;color:#CFC3A8;margin-bottom:2px}',
-        '.srs-match-item{display:flex;align-items:baseline;gap:6px;font-size:11px;line-height:1.7;',
-        'padding:2px 0;border-bottom:1px dashed rgba(201,164,92,.1)}',
-        '.srs-match-item .k{flex:0 0 84px;color:#A79C86}',
-        '.srs-match-item .n{flex:1 1 auto;color:#D6C7AA;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}',
-        '.srs-match-item .d{flex:0 0 auto;font-variant-numeric:tabular-nums}',
+        '.srs-match-item{font-size:11px;line-height:1.7;padding:3px 0;border-bottom:1px dashed rgba(201,164,92,.1)}',
+        '.srs-match-item:last-child{border-bottom:0}',
+        // 一行放「标签 + 分值」，说明另起一行 —— 说明普遍较长，挤在同一行会被分值截断
+        '.srs-match-line{display:flex;align-items:baseline;gap:6px}',
+        '.srs-match-line .k{flex:0 0 76px;color:#A79C86}',
+        '.srs-match-item .n{display:block;color:#D6C7AA;padding-left:82px;white-space:normal;word-break:break-word}',
+        '.srs-match-line .d{flex:0 0 auto;margin-left:auto;font-variant-numeric:tabular-nums}',
         '.srs-match-item .d.good{color:#8FC9A8}',
         '.srs-match-item .d.bad{color:#D98A8E}',
-        '.srs-match-item .d.flat{color:#9A907C}',
+        '.srs-match-item .d.flat{color:#A89C86}',
         '.srs-match-cap{font-size:11px;color:var(--srs-gold);margin:9px 0 2px}',
+        // 结论与口径说明之间的分隔线
+        '.srs-match-sep{height:1px;margin:12px 0 10px;',
+        'background:linear-gradient(90deg,transparent,rgba(201,164,92,.45),transparent)}',
+        // 口径说明：逐条一行，前缀小标签对齐；整段不再挤成一团
+        '.srs-match-hint{font-size:11px;line-height:1.68;color:#B9AC93}',
+        '.srs-match-hint p{margin:0 0 3px;display:flex;gap:6px;align-items:baseline}',
+        '.srs-match-hint b{flex:0 0 30px;color:#A79C86;font-weight:600}',
+        '.srs-match-hint p.srs-match-hint-tail{display:block;margin-top:7px;color:#9E9486;line-height:1.6}',
         '.srs-perlist{margin-top:10px;border-top:1px solid rgba(201,164,92,.14);padding-top:8px}',
         '.srs-per-row,.srs-day-row{display:flex;align-items:center;justify-content:space-between;padding:2px 0;font-size:11.5px}',
         '.srs-per-row .k,.srs-day-row .k{color:#D6C7AA;font-variant-numeric:tabular-nums}',
-        '.srs-per-del{font-family:inherit;font-size:10.5px;color:#9A907C;background:transparent;border:1px solid rgba(201,164,92,.16);',
+        '.srs-per-del{font-family:inherit;font-size:10.5px;color:#A89C86;background:transparent;border:1px solid rgba(201,164,92,.16);',
         'border-radius:4px;padding:1px 7px;cursor:pointer}',
         '.srs-per-del:hover{color:#E8A98C;border-color:rgba(232,169,140,.5)}',
         // W17 许愿瓶
@@ -861,10 +986,12 @@ window.__ModuleLoader__.load({
         '.srs-wish:last-child{border-bottom:0}',
         '.srs-wish-head{display:flex;align-items:center;justify-content:space-between;gap:8px;font-size:11px}',
         '.srs-wish-head .k{color:#C7B896}',
-        '.srs-wish-head .v{color:#8E8474}',
+        '.srs-wish-head .v{color:#A89C86}',
         '.srs-wish-head .v.is-due{color:#6FF0C2}',
         '.srs-wish-text{margin-top:5px;font-size:11.5px;line-height:1.6;color:#EFE3CB;white-space:pre-wrap;word-break:break-word}',
-        '.srs-wish-meta{margin-top:4px;font-size:10px;color:#7E7565}',
+        // W5 放下后折叠：内容收起来，留一句日期，可恢复
+        '.srs-wish-text.srs-wish-folded{color:#8A8172;font-style:italic;letter-spacing:.02em}',
+        '.srs-wish-meta{margin-top:4px;font-size:11px;color:#A89C86}',
         '.srs-wish .srs-per-del{position:absolute;right:0;top:6px}',
         '.srs-spread-wrap{flex-wrap:wrap;gap:6px;justify-content:flex-start}',
         '.srs-spread-wrap .srs-sp-cell{width:calc((100% - 18px) / 4)}',
@@ -882,7 +1009,13 @@ window.__ModuleLoader__.load({
         '.srs-daily-name{font-family:var(--srs-serif);font-size:13px;color:#EFE3CB;margin-bottom:4px}',
         '.srs-daily-lucky{display:flex;align-items:center;gap:6px;font-size:11px;color:#B9AC93;margin-top:6px}',
         '.srs-swatch-inl{width:14px;height:14px;border-radius:3px;margin:0}',
-        '.srs-daily-tip{font-size:11px;color:#94897A;margin-top:6px}',
+        '.srs-daily-tip{font-size:11px;color:#A89C86;margin-top:6px}',
+        // 心情页抽牌动效：牌背抖 450ms → 380ms 翻转（塔罗那套是 640ms，轻一档）
+        // 尺寸对齐出牌后的 76×116（76 宽 + 2:3 高 + 两侧 1px 金边），出牌时不跳位
+        '.srs-mood-shuf{position:relative;width:76px;flex:0 0 auto;height:116px}',
+        '.srs-mood-shuf .srs-shuf i{left:7%;top:6%;width:86%;height:88%;animation-duration:.44s}',
+        '.srs-flip-mood{width:76px;flex:0 0 auto}',
+        '.srs-flip-mood .srs-flip-in{animation-duration:.38s}',
         '.srs-row-tight{padding:1px 0}',
         '.srs-seg-wrap{flex-wrap:wrap;gap:3px;justify-content:flex-end}',
         '.srs-seg-wrap button{font-size:var(--srs-f12);padding:3px 6px}',
@@ -895,7 +1028,7 @@ window.__ModuleLoader__.load({
         '.srs-hist-day{margin-bottom:2px}',
         '.srs-hist-row{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:2px 0}',
         '.srs-hist-name{font-size:12px;color:#D6C7AA;flex:1 1 auto}',
-        '.srs-hist-num{font-size:11px;color:#9A907C;flex:0 0 auto}',
+        '.srs-hist-num{font-size:11px;color:#A89C86;flex:0 0 auto}',
         '.srs-pickgrid{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;justify-content:center;padding:4px 0 6px}',
         '.srs-pickcard{aspect-ratio:2/3;border:1px solid rgba(201,164,92,.55);border-radius:8px;cursor:pointer;',
         'background-color:#1B2340;background-size:cover;background-position:center;',
@@ -914,11 +1047,14 @@ window.__ModuleLoader__.load({
         '.srs-pickcard.is-locked:hover{transform:none}',
         '.srs-wait{margin-top:10px;padding-top:8px;border-top:1px solid rgba(201,164,92,.18)}',
         '.srs-wait-cap{font-size:11px;color:var(--srs-muted);letter-spacing:.06em}',
-        '.srs-wait-row{display:flex;gap:10px;margin-top:6px}',
-        '.srs-wait-cell{width:58px}',
-        '.srs-wait-img{width:58px;height:87px;object-fit:cover;border-radius:4px;display:block;',
+        '.srs-wait-row{display:flex;flex-wrap:wrap;gap:8px;margin-top:6px;justify-content:center}',
+        // 每行最多 5 张：宽度按 5 列算（100% - 4×gap），超过 5 张自动换到下一行，
+        // 5/7/10 张分别是 5、(5+2)、5+5，都在面板内，不会再探出右边界
+        '.srs-wait-cell{width:calc((100% - 32px) / 5);max-width:58px;min-width:0;box-sizing:border-box}',
+        '.srs-wait-img{width:100%;height:auto;aspect-ratio:58 / 87;object-fit:cover;border-radius:4px;display:block;',
         'border:1px solid rgba(201,164,92,.5);background:#141A2C;box-shadow:0 4px 10px rgba(0,0,0,.5)}',
-        '.srs-wait-lab{font-size:11px;color:#E7D9BC;text-align:center;margin-top:3px;letter-spacing:.04em}',
+        '.srs-wait-lab{font-size:10px;color:#E7D9BC;text-align:center;margin-top:3px;letter-spacing:0;',
+        'line-height:1.2;word-break:break-all}',
         '.srs-btn.is-reveal{color:#1A1206;background-image:none;',
         'background:linear-gradient(180deg,#EBD69F,#C9A45C);border:1px solid #F1E0B4;',
         'box-shadow:0 0 14px rgba(227,197,136,.35)}',
@@ -930,21 +1066,21 @@ window.__ModuleLoader__.load({
         // ── 计费页：余额只作对照，钱按真实 usage 记 ──
         '.srs-bill-hero{display:flex;align-items:flex-start;justify-content:space-between;gap:10px;padding:2px 0 8px}',
         '.srs-bill-left{min-width:0;flex:1 1 auto}',
-        '.srs-bill-cap{font-size:10.5px;letter-spacing:.16em;color:#8E8474;margin-bottom:4px}',
+        '.srs-bill-cap{font-size:10.5px;letter-spacing:.16em;color:#B9AC93;margin-bottom:4px}',
         '.srs-bill-num{font-family:var(--srs-serif);font-size:27px;line-height:1;color:#F7EBD0;',
         'font-variant-numeric:tabular-nums;letter-spacing:.01em}',
         '.srs-bill-num small{font-size:14px;color:var(--srs-gold-lit);margin-right:2px;vertical-align:1px}',
         '.srs-bill-num.is-dim{opacity:.5}',
-        '.srs-bill-sub{font-size:10.5px;line-height:1.55;color:#8E8474;font-variant-numeric:tabular-nums}',
+        '.srs-bill-sub{font-size:10.5px;line-height:1.55;color:#B9AC93;font-variant-numeric:tabular-nums}',
         '.srs-mini{font-family:inherit;font-size:11px;padding:3px 9px;cursor:pointer;border-radius:6px;white-space:nowrap;',
         'color:#DCCBA8;background:rgba(201,164,92,.08);border:1px solid rgba(201,164,92,.30)}',
         '.srs-mini:hover{color:#FFF3DA;border-color:rgba(227,197,136,.6)}',
         '.srs-mini:disabled{opacity:.55;cursor:default}',
         '.srs-kpis{display:grid;grid-template-columns:repeat(3,1fr);gap:6px}',
         '.srs-kpi{padding:6px 7px 7px;border-radius:8px;background:rgba(9,14,26,.46);border:1px solid rgba(201,164,92,.16)}',
-        '.srs-kpi .k{font-size:10px;color:#8E8474;letter-spacing:.04em}',
+        '.srs-kpi .k{font-size:10px;color:#A89C86;letter-spacing:.04em}',
         '.srs-kpi .v{margin-top:3px;font-size:13.5px;color:#EBDCBE;font-variant-numeric:tabular-nums}',
-        '.srs-bill-note{font-size:10.5px;line-height:1.6;color:#8E8474;margin-top:6px}',
+        '.srs-bill-note{font-size:11px;line-height:1.6;color:#B9AC93;margin-top:6px}',
         '.srs-bill-peak{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-top:9px}',
         '.srs-chip{display:inline-flex;align-items:center;font-size:10px;padding:2px 7px;border-radius:999px;',
         'color:#C9BBA0;background:rgba(201,164,92,.07);border:1px solid rgba(201,164,92,.26);white-space:nowrap}',
@@ -959,7 +1095,7 @@ window.__ModuleLoader__.load({
         'background:linear-gradient(180deg,rgba(227,197,136,.55),rgba(201,164,92,.18))}',
         '.srs-bar.today i{background:linear-gradient(180deg,#E9CB92,rgba(201,164,92,.45));',
         'box-shadow:0 0 10px rgba(227,197,136,.28)}',
-        '.srs-bar span{font-size:9px;color:#7C7364;font-variant-numeric:tabular-nums}',
+        '.srs-bar span{font-size:9px;color:#A89C86;font-variant-numeric:tabular-nums}',
         '.srs-bill-caprow{display:flex;align-items:center;justify-content:space-between;gap:8px;margin:11px 0 4px}',
         '.srs-head-right{display:flex;align-items:center;gap:7px;flex:0 0 auto}',
         '.srs-head-bill{font-family:inherit;font-size:10.5px;line-height:1;padding:4px 8px;border-radius:999px;cursor:pointer;',
@@ -971,10 +1107,15 @@ window.__ModuleLoader__.load({
         '.srs-mrow .bar{flex:1 1 auto;height:4px;border-radius:2px;background:rgba(201,164,92,.12);overflow:hidden}',
         '.srs-mrow .bar i{display:block;height:100%;background:linear-gradient(90deg,rgba(201,164,92,.5),rgba(227,197,136,.95))}',
         '.srs-mrow .a{flex:0 0 auto;color:#E8DDC6;font-variant-numeric:tabular-nums}',
-        '.srs-items{margin-top:2px}',
+        '.srs-items{margin-top:2px;max-height:276px;overflow-y:auto;overscroll-behavior:contain;padding-right:2px}',
+        // 内层滚动条收细，别在 332px 的面板里抢视线
+        '.srs-items::-webkit-scrollbar{width:4px}',
+        '.srs-items::-webkit-scrollbar-track{background:transparent}',
+        '.srs-items::-webkit-scrollbar-thumb{background:rgba(201,164,92,.3);border-radius:2px}',
+        '.srs-items::-webkit-scrollbar-thumb:hover{background:rgba(201,164,92,.5)}',
         '.srs-item{display:flex;align-items:baseline;gap:8px;padding:4px 0;border-bottom:1px dashed rgba(177,146,106,.13);font-size:11px}',
         '.srs-item:last-child{border-bottom:0}',
-        '.srs-item .t{flex:0 0 52px;color:#7C7364;font-variant-numeric:tabular-nums}',
+        '.srs-item .t{flex:0 0 52px;color:#A89C86;font-variant-numeric:tabular-nums}',
         '.srs-item .m{flex:1 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:#CFC3A9}',
         '.srs-item .a{flex:0 0 auto;color:#EBDCBE;font-variant-numeric:tabular-nums}',
         // ── 插画小卡按钮族（2026-11-17 第八版）───────────────────────
@@ -982,17 +1123,17 @@ window.__ModuleLoader__.load({
         // 各自定义过颜色，压在星空底上又细又淡，跟新菜单栏的卡不是一套语言。
         // 这一块必须写在样式数组末尾：前面同名规则特异性一样，只有靠后置才盖得住。
         // 规格与菜单栏 tab 卡同族：3.5% 金底 + 9% 金边 + 6px 圆角 + 一道 5% 的顶部纸光。
-        '.srs-seg button,.srs-signs button,.srs-moods button,.srs-per-del,.srs-row2 button{',
+        '.srs-seg button,.srs-signs button,.srs-moods button,.srs-form-grid button,.srs-per-del,.srs-row2 button{',
         'font-family:inherit;cursor:pointer;border-radius:6px;color:rgba(232,221,198,.72);',
         'background:rgba(201,164,92,.035);border:1px solid rgba(201,164,92,.09);',
         'box-shadow:inset 0 1px 0 rgba(255,243,218,.05);',
         'transition:background-color 150ms ease,border-color 150ms ease,color 150ms ease}',
-        '.srs-seg button:hover,.srs-signs button:hover,.srs-moods button:hover,',
+        '.srs-seg button:hover,.srs-signs button:hover,.srs-moods button:hover,.srs-form-grid button:hover,',
         '.srs-row2 button:hover{background:rgba(201,164,92,.10);border-color:rgba(201,164,92,.24);',
         'color:var(--srs-parch)}',
         '.srs-seg button:disabled{opacity:.45;cursor:default}',
         // 选中：底提亮一档、边框转亮金、字转米白并加粗
-        '.srs-seg button.on,.srs-signs button.on,.srs-moods button.on,.srs-row2 button.is-ok{',
+        '.srs-seg button.on,.srs-signs button.on,.srs-moods button.on,.srs-form-grid button.on,.srs-row2 button.is-ok{',
         'background:rgba(201,164,92,.17);border-color:rgba(227,197,136,.4);',
         'color:#FFF3DA;font-weight:600}',
         // 副按钮组里的主选项（保存 / 设置密码这类）
@@ -1004,7 +1145,7 @@ window.__ModuleLoader__.load({
         'background:rgba(232,169,140,.08)}',
         // 尺寸沿用各自原来的字阶，只换皮
         '.srs-seg button{font-size:10.5px;padding:3px 7px}',
-        // 塔罗页底部「N 条 / 牌库 / 存图 / 3:4」：这一行是页面级入口，比行内小开关重要，单独放大一档
+        // 塔罗页底部「N 条 / 回顾 / 牌库」：这一行是页面级入口，比行内小开关重要，单独放大一档
         '.srs-seg-lg button{font-size:var(--srs-f12);padding:4px 9px;color:rgba(232,221,198,.82)}',
         '.srs-seg-lg button:disabled{opacity:.58}',
         '.srs-seg-wrap button{font-size:var(--srs-f12);padding:3px 6px}',
@@ -1022,7 +1163,7 @@ window.__ModuleLoader__.load({
         '.srs-menu-act-ic .srs-cap-ic{width:16px;height:16px}',
         '.srs-menu-act-ic .t{color:#EFE3CB}',
         // 说明文字的次级档：比 .srs-note 小一档、更淡，别跟正文抢注意力
-        '.srs-note-s{font-size:11px;line-height:1.6;color:#A2998A;margin-top:4px}',
+        '.srs-note-s{font-size:11px;line-height:1.6;color:#B9AC93;margin-top:4px}',
         '.srs-menu-act.srs-switch{display:flex;align-items:center;justify-content:space-between;gap:8px}',
         '.srs-switch .sw{flex:0 0 auto;width:34px;height:18px;border-radius:9px;',
         'background:rgba(201,164,92,.13);box-shadow:inset 0 1px 2px rgba(6,10,20,.45);',
@@ -1077,7 +1218,7 @@ window.__ModuleLoader__.load({
         '.srs-wear-chip{width:18px;height:18px;border-radius:5px;grid-row:span 2;',
         'border:1px solid rgba(232,221,198,.28)}',
         '.srs-wear-row .k{font-size:12.5px;color:var(--srs-parch)}',
-        '.srs-wear-how{grid-column:2;font-size:11px;line-height:1.6;color:#A2998A}',
+        '.srs-wear-how{grid-column:2;font-size:11px;line-height:1.6;color:#B9AC93}',
         '.srs-breathe-box{display:flex;flex-direction:column;align-items:center;gap:10px;padding:8px 0}',
         '.srs-breathe-ring{width:132px;height:132px;border-radius:50%;display:flex;align-items:center;',
         'justify-content:center;position:relative;border:1px solid rgba(201,164,92,.34)}',
@@ -1106,10 +1247,14 @@ window.__ModuleLoader__.load({
         '.srs-flip-in{animation:none!important;transform:rotateY(180deg)!important}',
         '.srs-fadein{animation:none!important}}',
       ].join('');
-      const el = document.createElement('style');
-      el.id = STYLE_ID;
+      let el = document.getElementById(STYLE_ID);
+      if (el && el.textContent === css) return;   // 内容一致才免写
+      if (!el) {
+        el = document.createElement('style');
+        el.id = STYLE_ID;
+        document.head.appendChild(el);
+      }
       el.textContent = css;
-      document.head.appendChild(el);
       // 旧版本残留的样式表顺手清掉，免得两套规则打架
       Array.prototype.slice.call(document.querySelectorAll('style[id^="srs-style"]')).forEach((old) => {
         if (old.id !== STYLE_ID && old.parentNode) old.parentNode.removeChild(old);
@@ -1327,66 +1472,210 @@ window.__ModuleLoader__.load({
       return c;
     }
 
-    // 合婚打分：基准 60，五项加减，夹在 5–98
+    // ── 合婚（对齐 dsh-kuitan-tianji/engine/hepan.js 的三维模型 + 明细层）──────
+    // ① 日主：双向取平均（谁看谁都要算，交换双方分数不变）
+    // ② 夫妻宫（日支）：独立权重表，含相破；这是主轴，权重远高于属相
+    // ③ 五行互补：一方所旺是否正是另一方所缺
+    // 明细层只列不断分：属相（年支）、天干五合、十神互看、跨盘地支、年命纳音、吉凶象计数。
+    const PO_PAIR = [['子', '酉'], ['卯', '午'], ['辰', '丑'], ['未', '戌'], ['寅', '亥'], ['巳', '申']];
+    const HE5 = [['甲', '己'], ['乙', '庚'], ['丙', '辛'], ['丁', '壬'], ['戊', '癸']];
+    const WX_ALL = ['木', '火', '土', '金', '水'];
+
+    // 身强身弱（简化三得：得令 3 分 / 得地 1 分 / 得势 1 分）
+    // 阈值 4 是对 kuitan 300 组随机命盘标定出来的：≥4 判强与它的一致率 91.3%
+    // （阈值 5 只有 79.3%，会系统性把偏强判成偏弱）
+    function strengthOf(p) {
+      const meWx = GAN_WX[p.ganIdx[2]];
+      const inMe = Object.keys(WX_SHENG).filter((k) => WX_SHENG[k] === meWx)[0];
+      const support = [meWx, inMe];
+      let s = 0;
+      if (p.zhiIdx[1] != null && support.indexOf(ZHI_WX[p.zhiIdx[1]]) >= 0) s += 3;   // 得令（月支）
+      [0, 2, 3].forEach((i) => {                                                       // 得地（年/日/时支）
+        if (p.zhiIdx[i] != null && support.indexOf(ZHI_WX[p.zhiIdx[i]]) >= 0) s += 1;
+      });
+      [0, 1, 3].forEach((i) => {                                                       // 得势（年/月/时干）
+        if (p.ganIdx[i] != null && support.indexOf(GAN_WX[p.ganIdx[i]]) >= 0) s += 1;
+      });
+      return { points: s, strong: s >= 4, meWx: meWx, inMe: inMe };
+    }
+
+    // 喜用五行：身强喜克泄耗（官杀/财/食伤），身弱喜生扶（印/比劫）
+    function favorOf(st) {
+      const me = st.meWx;
+      const keMe = Object.keys(WX_KE).filter((k) => WX_KE[k] === me)[0];   // 克我
+      const iKe = WX_KE[me];                                              // 我克
+      const iSheng = WX_SHENG[me];                                        // 我生
+      return st.strong ? [keMe, iKe, iSheng] : [st.inMe, me];
+    }
+
+    // 对方五行对我做了什么（kuitan 同一套分值）
+    function wxToMe(other, me) {
+      if (other === me) return { name: '比和', score: 13, text: '两人日主同五行，气味相投，也容易一起犯同样的毛病' };
+      if (WX_SHENG[other] === me) return { name: '生我', score: 20, text: '对方五行生你，容易得到照顾与助力' };
+      if (WX_SHENG[me] === other) return { name: '我生', score: 10, text: '你生对方，多为付出的一方，久了要留意消耗' };
+      if (WX_KE[me] === other) return { name: '我克', score: 5, text: '你克对方，主导感较强，需留意对方的空间' };
+      return { name: '克我', score: -12, text: '对方克你，压力感偏重，宜把话说开' };
+    }
+
+    // 夫妻宫：日支两两关系（独立权重，比属相那套重得多）
+    function gongPair(a, b) {
+      if (a === b) return { name: '同支', delta: 0, tag: 'flat', note: '日支相同，性情相近，容易互相理解，也容易同时卡在同一处' };
+      if (hasPair(LIUHE, a, b)) return { name: '六合', delta: 20, tag: 'good', note: '日支六合，相处自然、彼此补位' };
+      if (SANHE.some((g) => g.indexOf(a) >= 0 && g.indexOf(b) >= 0)) {
+        return { name: '半合', delta: 14, tag: 'good', note: '日支同属三合局，易有共同语言' };
+      }
+      if (hasPair(LIUCHONG, a, b)) return { name: '相冲', delta: -15, tag: 'bad', note: '日支相冲，节奏与需求容易错位，需要刻意协调' };
+      if (hasPair(XING, a, b)) return { name: '相刑', delta: -10, tag: 'bad', note: '日支相刑，摩擦多起于细节，宜少用指责' };
+      if (hasPair(LIUHAI, a, b)) return { name: '相害', delta: -9, tag: 'bad', note: '日支相害，容易因第三方或误解生嫌隙' };
+      if (hasPair(PO_PAIR, a, b)) return { name: '相破', delta: -5, tag: 'bad', note: '日支相破，小事易起波澜' };
+      return { name: '无直接关系', delta: 4, tag: 'flat', note: '日支之间没有直接刑冲合害，关系好坏主要看经营' };
+    }
+
+    // 属相（年支）：只进明细，分值小 —— 传统上它只影响表层印象
+    function yearPair(a, b) {
+      if (a === b) return { name: '同属相', delta: -3, tag: 'bad', note: '属相相同，传统称「自刑」，容易互相较劲、谁也不让谁' };
+      if (hasPair(LIUHE, a, b)) return { name: '六合', delta: 3, tag: 'good', note: '属相六合，初印象与长辈缘通常不错' };
+      if (SANHE.some((g) => g.indexOf(a) >= 0 && g.indexOf(b) >= 0)) {
+        return { name: '三合', delta: 3, tag: 'good', note: '属相三合，容易有共同话题与共同朋友' };
+      }
+      if (hasPair(LIUCHONG, a, b)) return { name: '六冲', delta: -3, tag: 'bad', note: '属相六冲，节奏与立场容易相反，重大决定前宜多对一遍' };
+      if (hasPair(LIUHAI, a, b)) return { name: '相害', delta: -2, tag: 'bad', note: '属相相害，容易因第三方或误会生嫌隙' };
+      if (hasPair(XING, a, b)) return { name: '相刑', delta: -2, tag: 'bad', note: '属相相刑，摩擦多起于相处细节' };
+      return { name: '无直接关系', delta: 0, tag: 'flat', note: '属相之间没有合冲刑害，表层影响小，以日柱为主' };
+    }
+
+    // 十神：以「我」的日干看「对方」的日干
+    // 注意 GAN_WX / ZHI_WX 是按索引的数组，不是按字查的表 —— 必须先转成索引
+    function tenGod(meStem, otherStem) {
+      const ai = GAN.indexOf(meStem);
+      const bi = GAN.indexOf(otherStem);
+      if (ai < 0 || bi < 0) return '';
+      const a = GAN_WX[ai];
+      const b = GAN_WX[bi];
+      const samePolarity = (ai % 2) === (bi % 2);
+      if (a === b) return samePolarity ? '比肩' : '劫财';
+      if (WX_SHENG[a] === b) return samePolarity ? '食神' : '伤官';
+      if (WX_KE[a] === b) return samePolarity ? '偏财' : '正财';
+      if (WX_KE[b] === a) return samePolarity ? '七杀' : '正官';
+      return samePolarity ? '偏印' : '正印';
+    }
+
     function hepan(m, f) {
-      const items = [];
-      let score = 60;
-      const push = (name, r, extra) => {
-        score += r.delta;
-        items.push({ name, note: r.note + (extra ? '（' + extra + '）' : ''), delta: r.delta, tag: r.tag });
-      };
-      // ① 生肖（年支）
-      push('生肖（年支）', zhiPair(ZHI[m.zhiIdx[0]], ZHI[f.zhiIdx[0]]),
-        ZHI[m.zhiIdx[0]] + ' · ' + ZHI[f.zhiIdx[0]]);
-      // ② 配偶宫（日支）
-      const r2 = zhiPair(ZHI[m.zhiIdx[2]], ZHI[f.zhiIdx[2]]);
-      // 配偶宫更重：权重放大一半（取整不取巧）
-      push('配偶宫（日支）', { delta: Math.round(r2.delta * 1.5), note: r2.note, tag: r2.tag },
-        ZHI[m.zhiIdx[2]] + ' · ' + ZHI[f.zhiIdx[2]]);
-      // ③ 日干五行
-      const wa = GAN_WX[m.ganIdx[2]];
-      const wb = GAN_WX[f.ganIdx[2]];
-      push('日主五行', wxPair(wa, wb), GAN[m.ganIdx[2]] + wa + ' · ' + GAN[f.ganIdx[2]] + wb);
-      // ④ 年柱纳音
+      const aStem = GAN[m.ganIdx[2]];
+      const bStem = GAN[f.ganIdx[2]];
+      const aWx = GAN_WX[m.ganIdx[2]];
+      const bWx = GAN_WX[f.ganIdx[2]];
+      const aZhi = ZHI[m.zhiIdx[2]];
+      const bZhi = ZHI[f.zhiIdx[2]];
+
+      // ① 日主：双向取平均 → 交换双方结果不变
+      const aToB = wxToMe(bWx, aWx);   // 以乾为主体看坤
+      const bToA = wxToMe(aWx, bWx);
+      const stemScore = (aToB.score + bToA.score) / 2;
+
+      // ② 夫妻宫
+      const gong = gongPair(aZhi, bZhi);
+
+      // ③ 五行互补：一方所旺，是否正是另一方的喜用（kuitan 同一套结构）
+      const ca = wxCounts(m);
+      const cb = wxCounts(f);
+      const strongOf = (c) => WX_ALL.slice().sort((x, y) => c[y] - c[x])[0];
+      const strongA = strongOf(ca);
+      const strongB = strongOf(cb);
+      const stA = strengthOf(m);
+      const stB = strengthOf(f);
+      const favorA = favorOf(stA);
+      const favorB = favorOf(stB);
+      const lackA = WX_ALL.filter((w) => !ca[w]);
+      const lackB = WX_ALL.filter((w) => !cb[w]);
+      let compScore = 0;
+      const compNotes = [];
+      const bFeedsA = favorA.indexOf(strongB) >= 0;
+      const aFeedsB = favorB.indexOf(strongA) >= 0;
+      if (bFeedsA) { compScore += 12; compNotes.push('对方的旺行 ' + strongB + ' 正是你的喜用'); }
+      if (aFeedsB) { compScore += 12; compNotes.push('你的旺行 ' + strongA + ' 正是对方的喜用'); }
+      if (!bFeedsA && !aFeedsB) { compScore += 3; compNotes.push('双方的旺行都不是对方的喜用，互补性一般，靠沟通补'); }
+      if (lackA.indexOf(strongB) >= 0) { compScore += 4; compNotes.push('你命局缺 ' + strongB + '，对方正好偏旺'); }
+      if (lackB.indexOf(strongA) >= 0) { compScore += 4; compNotes.push('对方命局缺 ' + strongA + '，你正好偏旺'); }
+
+      // ④ 综合：raw ≈ -27 ~ 56，线性映射到 0–100
+      const raw = stemScore + gong.delta + compScore;
+      const score = Math.max(0, Math.min(100, Math.round(((raw + 27) / 83) * 100)));
+      const level = score >= 75 ? '契合度较高' : (score >= 55 ? '中等偏顺' : (score >= 40 ? '需要磨合' : '差异较大'));
+
+      const items = [
+        {
+          name: '日主',
+          note: aToB.name + ' / ' + bToA.name + '（双向取平均）',
+          delta: Math.round(stemScore),
+          tag: stemScore > 0 ? 'good' : (stemScore < 0 ? 'bad' : 'flat'),
+        },
+        { name: '夫妻宫', note: gong.note, delta: gong.delta, tag: gong.tag },
+        { name: '五行互补', note: compNotes.join('，'), delta: compScore, tag: compScore > 0 ? 'good' : 'flat' },
+      ];
+
+      // ⑤ 明细层：只列出来，不参与总分
+      const yearRel = yearPair(ZHI[m.zhiIdx[0]], ZHI[f.zhiIdx[0]]);
+      const he5 = HE5.some((p) => p.indexOf(aStem) >= 0 && p.indexOf(bStem) >= 0 && aStem !== bStem);
+      const godToB = tenGod(aStem, bStem);
+      const godToA = tenGod(bStem, aStem);
+
+      const brA = (m.zhiIdx || []).map((z) => ZHI[z]);
+      const brB = (f.zhiIdx || []).map((z) => ZHI[z]);
+      const cross = [];
+      const crossSeen = {};
+      for (const x of brA) {
+        for (const y of brB) {
+          let c = null;
+          if (hasPair(LIUHE, x, y)) c = { a: x, b: y, name: '六合', delta: 1, note: '跨盘六合，易有自然的亲近与默契' };
+          else if (x !== y && SANHE.some((g) => g.indexOf(x) >= 0 && g.indexOf(y) >= 0)) c = { a: x, b: y, name: '半合', delta: 1, note: '跨盘半合，某些事上容易一拍即合' };
+          else if (hasPair(LIUCHONG, x, y)) c = { a: x, b: y, name: '相冲', delta: -1, note: '跨盘相冲，某些领域节奏相反，需要分工' };
+          else if (hasPair(LIUHAI, x, y)) c = { a: x, b: y, name: '相害', delta: -1, note: '跨盘相害，容易在第三方或琐事上起误会' };
+          if (!c) continue;
+          const k = c.name + [x, y].sort().join('');
+          if (crossSeen[k]) continue;
+          crossSeen[k] = true;
+          cross.push(c);
+        }
+      }
+
       const na = NAYIN[Math.floor(m.yearIdx / 2)];
       const nb = NAYIN[Math.floor(f.yearIdx / 2)];
-      const nA = na.slice(-1); const nB = nb.slice(-1);
-      const r4 = (nA === nB)
-        ? { delta: 2, note: '相同', tag: 'flat' }
-        : (WX_SHENG[nA] === nB || WX_SHENG[nB] === nA
-          ? { delta: 6, note: '相生', tag: 'good' }
-          : (WX_KE[nA] === nB || WX_KE[nB] === nA
-            ? { delta: -4, note: '相克', tag: 'bad' }
-            : { delta: 0, note: '不生不克', tag: 'flat' }));
-      push('年柱纳音', r4, na + ' · ' + nb);
-      // ⑤ 五行互补：自己缺的，对方身上有没有
-      const ca = wxCounts(m); const cb = wxCounts(f);
-      const lacks = [];
-      let bonus = 0;
-      Object.keys(ca).forEach((k) => {
-        if (ca[k] === 0 && cb[k] > 0) { bonus += 3; lacks.push('乾缺' + k + '·坤有'); }
-        if (cb[k] === 0 && ca[k] > 0) { bonus += 3; lacks.push('坤缺' + k + '·乾有'); }
-      });
-      if (bonus > 9) bonus = 9;
-      score += bonus;
-      items.push({
-        name: '五行互补',
-        note: lacks.length ? lacks.join('，') : '两边分布接近，谁也没补到谁',
-        delta: bonus,
-        tag: bonus > 0 ? 'good' : 'flat',
-      });
-      score = Math.max(5, Math.min(98, Math.round(score)));
-      const level = score >= 80 ? '合得顺' : (score >= 65 ? '大体合' : (score >= 50 ? '要磨合' : '费些劲'));
-      const tips = score >= 80
+      const nA = na.slice(-1);
+      const nB = nb.slice(-1);
+      let nayinRel;
+      if (nA === nB) nayinRel = { name: '纳音比和', delta: 0, tag: 'flat', note: '两人年命纳音同五行，底色相近' };
+      else if (WX_SHENG[nA] === nB) nayinRel = { name: '纳音相生', delta: 1, tag: 'good', note: '你的年命纳音属' + nA + '生对方' + nB + '，你多是先付出的一方' };
+      else if (WX_SHENG[nB] === nA) nayinRel = { name: '纳音相生', delta: 1, tag: 'good', note: '对方年命纳音属' + nB + '生你' + nA + '，你容易得到照应' };
+      else if (WX_KE[nA] === nB) nayinRel = { name: '纳音相克', delta: -1, tag: 'bad', note: '你的年命纳音属' + nA + '克对方' + nB + '，主导感偏强' };
+      else nayinRel = { name: '纳音相克', delta: -1, tag: 'bad', note: '对方年命纳音属' + nB + '克你' + nA + '，压力感偏重' };
+
+      const good = (yearRel.delta > 0 ? 1 : 0) + (he5 ? 1 : 0) + (gong.delta > 5 ? 1 : 0)
+        + cross.filter((c) => c.delta > 0).length + (nayinRel.delta > 0 ? 1 : 0);
+      const bad = (yearRel.delta < 0 ? 1 : 0) + (gong.delta < 0 ? 1 : 0)
+        + cross.filter((c) => c.delta < 0).length + (nayinRel.delta < 0 ? 1 : 0);
+      const lean = (good - bad) >= 3 ? '吉象偏多' : ((good - bad) >= 1 ? '吉略多于凶' : ((good - bad) === 0 ? '吉凶相当' : '凶象偏多'));
+
+      const detail = [
+        { k: '属相', v: yearRel.name + '（' + ZHI[m.zhiIdx[0]] + ' · ' + ZHI[f.zhiIdx[0]] + '）', d: yearRel.delta, note: yearRel.note, tag: yearRel.tag },
+        { k: '天干', v: he5 ? '五合（' + aStem + bStem + '）' : '无五合', d: he5 ? 1 : 0, note: he5 ? '彼此吸引强，也容易黏在一起分不开' : ('对方在你盘里是「' + godToB + '」，你在对方盘里是「' + godToA + '」'), tag: he5 ? 'good' : 'flat' },
+        { k: '纳音', v: na + ' · ' + nb, d: nayinRel.delta, note: nayinRel.note, tag: nayinRel.tag },
+        { k: '跨盘', v: cross.length ? cross.slice(0, 6).map((c) => c.a + c.b + c.name).join('，') : '无', d: cross.reduce((s, c) => s + c.delta, 0), note: cross.length ? cross[0].note : '跨盘地支之间没有明显合冲', tag: cross.some((c) => c.delta > 0) ? 'good' : (cross.some((c) => c.delta < 0) ? 'bad' : 'flat') },
+      ];
+
+      const tips = score >= 75
         ? ['把想做的事说在前头：合得顺的时候最容易省掉沟通这一步', '一起办一件具体的小事，比反复确认关系有用', '各留一块自己的时间，别把「合」当成黏在一起']
-        : (score >= 65
+        : (score >= 55
           ? ['先把分歧点写下来，别在气头上谈', '各自把「我最在意的三件事」说一遍，只说不解释', '每月留一次不谈问题的相处']
           : ['先看底线在哪儿：哪些事你绝不让步，写下来再看能不能对上', '把最常吵的那件事固定成一条规则，别每次重新吵', '别拿这张盘当判决书 —— 它说的是结构，不是结局']);
+
       return {
-        score, level, items, tips,
+        score, level, items, detail, tips,
+        tally: { good, bad, lean },
         male: m, female: f,
         nayin: [na, nb],
         pillars: [m.pillars.join('　'), f.pillars.join('　')],
+        dayMasters: [aStem + aWx + '（' + aZhi + '）', bStem + bWx + '（' + bZhi + '）'],
       };
     }
 
@@ -1522,8 +1811,44 @@ window.__ModuleLoader__.load({
         else if (now === true && fut === true) tail = '现在与未来都正，接着往前推一步。';
         else if (now === false && fut === false) tail = '现在和未来都逆，先把手上没结的收个尾。';
         else tail = '一顺一逆之间，差的是你下一步怎么走。';
+      } else if (mode === 'five' && list.length >= 5) {
+        const block = at(1);     // 2 阻碍
+        const advice = at(2);    // 3 建议
+        const result = at(3);    // 4 结果
+        const hidden = at(4);    // 5 潜在
+        const parts = [];
+        if (block === true) parts.push('阻碍位正着，那个结还实实在在卡在那儿。');
+        else if (block === false) parts.push('阻碍位逆着，挡路的东西正在松。');
+        if (advice === true) parts.push('建议位正，牌给的做法可以直接试。');
+        else if (advice === false) parts.push('建议位逆着，先别照字面做，换个方式再来。');
+        if (result === true) parts.push('结果位正，顺着当前走法落点不差。');
+        else if (result === false) parts.push('结果位逆，按现在这样走会绕一下。');
+        if (hidden === false) parts.push('潜在位逆着，暗处那部分正在冒头，值得留意。');
+        tail = parts.join('') || '五位一起看，重点在阻碍与建议这一对。';
+      } else if (mode === 'relation' && list.length >= 7) {
+        const you = at(0);
+        const other = at(1);
+        const block = at(5);
+        const trend = at(6);
+        const parts = [];
+        if (you === true && other === true) parts.push('两边都是正的，气场是对得上的。');
+        else if (you === false && other === false) parts.push('两边都逆着，各自都有没收好的部分。');
+        else if (you === true && other === false) parts.push('你这边是正的、对方逆着，推力主要在你。');
+        else if (you === false && other === true) parts.push('对方正着、你这边逆着，先照顾自己的位置。');
+        if (block === true) parts.push('阻碍位正着，那层窗户纸还没被戳破。');
+        else if (block === false) parts.push('阻碍位逆着，卡着的东西正在化解。');
+        if (trend === true) parts.push('走向位正，维持现在这样会往好的方向滑。');
+        else if (trend === false) parts.push('走向位逆，维持现状会往下走，得主动调。');
+        tail = parts.join('');
+      } else if (mode === 'either' && list.length >= 5) {
+        const aEnd = at(2);      // A 的结果
+        const bEnd = at(4);      // B 的结果
+        if (aEnd === true && bEnd === false) tail = 'A 的结果正、B 的结果逆 —— 这一次偏向 A。';
+        else if (aEnd === false && bEnd === true) tail = 'B 的结果正、A 的结果逆 —— 这一次偏向 B。';
+        else if (aEnd === true && bEnd === true) tail = '两条路的结果都正，差别在过程里你更愿意走哪一种。';
+        else tail = '两条路的结果都偏逆，先别急着选，等一个更清楚的信号。';
       } else {
-        // 目前只有 three / celtic 两处调用；别的张数不出组合结论，只留首句，不猜张数
+        // 单张 / 每日不出组合结论（与宿主 combine 口径一致：one 时 combine 为空）
         tail = '';
       }
       return [first, tail].filter(Boolean).join(' ');
@@ -1535,6 +1860,29 @@ window.__ModuleLoader__.load({
         过去: '已经发生、还在牵着你的事',
         现在: '此刻真实的处境',
         未来: '按现在的走法会抵达的地方',
+      },
+      five: {
+        现状: '眼下真实的地形与手上的资源',
+        阻碍: '卡住进程、还没被命名的那个结',
+        建议: '可以主动调整的方向与做法',
+        结果: '按当前路径走下去的大致落点',
+        潜在: '尚未浮出水面、却在暗中推动的部分',
+      },
+      relation: {
+        你: '你在这段关系里的位置与状态',
+        对方: '对方此刻的位置与状态',
+        关系现状: '两个人之间正在发生的事',
+        你的期待: '你嘴上没说、心里想要的那件事',
+        对方的期待: '对方没说出口、在等的那件事',
+        阻碍: '卡在两个人之间、谁都没先提的那层',
+        走向: '维持现状会滑向的位置',
+      },
+      either: {
+        现状: '做选择之前，先看清脚下站的是什么',
+        'A 的发展': '选这一条，过程会怎么走',
+        'A 的结果': '选这一条，最后停在哪里',
+        'B 的发展': '选另一条，过程会怎么走',
+        'B 的结果': '选另一条，最后停在哪里',
       },
       celtic: {
         现状: '你此刻站在哪里',
@@ -1558,6 +1906,166 @@ window.__ModuleLoader__.load({
       return '（' + guide + '）' + line;
     }
 
+    // ── 富解读（与宿主 srs-engine.mjs 的 richReading 逐字同逻辑）───────────
+    // 确定性：同样的 cards + direction 得同样的段落，不引入任何随机。
+    const ELEMENT_ORDER = ['火', '水', '风', '土'];
+    const ELEM_NAME = { 火: '热情与行动', 水: '情感与关系', 风: '思维与沟通', 土: '现实与资源' };
+    const ELEM_TIP = {
+      火: '先做一件让自己动起来的小事，别等状态',
+      水: '给情绪留出说话的时间，别急着讲道理',
+      风: '把想法写下来再判断，别只在脑子里绕',
+      土: '落成一个可执行的步骤，写明时间和预算',
+    };
+    const ELEM_WARN = {
+      火: '容易过火，别把热情变成压人',
+      水: '别被情绪淹没，先分清哪部分是自己的',
+      风: '想得太多，记得回到事实和身体',
+      土: '别太保守到错过窗口',
+    };
+    const COURT_NAMES = ['侍从', '骑士', '王后', '国王'];
+    const DIRECTION_LABEL = {
+      general: '综合', wealth: '财运', career: '事业', love: '感情',
+      health: '健康', study: '学业', travel: '出行',
+    };
+    const DIRECTION_FOCUS = {
+      general: '不限方向，先看整盘的走势与关节',
+      wealth: '看钱的进与出、时机与风险的配比',
+      career: '看位置、推力与接下来该主动的那一步',
+      love: '看两个人之间的力与期待是否对得上',
+      health: '看身心节律；具体病痛请找医生，牌只照状态',
+      study: '看专注与方法的走向，别只看努力程度',
+      travel: '看动身的时机与路上的变数',
+    };
+    function richOf(cardId) {
+      return (TAROT_RICH && TAROT_RICH.cards && TAROT_RICH.cards[cardId]) || null;
+    }
+    // 牌阵位置表（factory 层）：抽牌页与富解读共用，与宿主 srs-engine.mjs 的 SPREADS.labels 逐字一致
+    const SPREAD_LABEL = ['过去', '现在', '未来'];
+    const FIVE_LABEL = ['现状', '阻碍', '建议', '结果', '潜在'];
+    const RELATION_LABEL = ['你', '对方', '关系现状', '你的期待', '对方的期待', '阻碍', '走向'];
+    const EITHER_LABEL = ['现状', 'A 的发展', 'A 的结果', 'B 的发展', 'B 的结果'];
+    const CELTIC_LABEL = ['现状', '阻碍', '根基', '过去', '目标', '未来', '自己', '环境', '期待与恐惧', '结果'];
+    const SPREAD_WANT = { one: 1, three: 3, five: 5, relation: 7, celtic: 10, either: 5 };
+    const SPREAD_POS = {
+      one: ['当下指引'], three: SPREAD_LABEL, five: FIVE_LABEL,
+      relation: RELATION_LABEL, celtic: CELTIC_LABEL, either: EITHER_LABEL,
+    };
+    function richReading(picks, spread, question, direction) {
+      const list = (picks || []).filter((c) => c && c.card);
+      const n = list.length;
+      if (!n) return ['没有抽到牌面，无法解读。'];
+      const q = String(question || '').trim();
+      const dir = DIRECTION_LABEL[direction] ? direction : 'general';
+      const dirLabel = DIRECTION_LABEL[dir];
+      const dirFocus = DIRECTION_FOCUS[dir];
+      const names = list.map((c) => c.card.name_zh).join(' / ');
+      const paras = [];
+
+      paras.push((q ? '你问的是「' + q + '」' : '这次没有具体提问')
+        + '，方向落在「' + dirLabel + '」（' + dirFocus + '）。抽到的是 ' + n + ' 张牌阵（' + names + '）。'
+        + '塔罗是一套象征系统而不是判决：这里按 RWS（韦特）牌名与黄金黎明的元素对应来读，请把下面的话当作镜子，对照自己的处境取用。');
+
+      const idx = list.map((_, i) => i);
+      const groups = n <= 3 ? idx.map((i) => [i]) : [idx.slice(0, Math.ceil(n / 2)), idx.slice(Math.ceil(n / 2))];
+      for (const group of groups) {
+        const lines = group.map((i) => {
+          const c = list[i];
+          const r = richOf(c.card.id) || {};
+          const kws = ((c.meaning && c.meaning.keywords) || []).join('、');
+          const core = r.core ? '它的核心是「' + r.core + '」。' : '';
+          const img = r.image ? '牌面上' + r.image + '，' : '';
+          const ast = r.astro ? '它对应的占星位置是' + r.astro + '，' : '';
+          const el = r.element ? r.element + '元素（' + (ELEM_NAME[r.element] || '') + '）' : '';
+          const oriNote = c.reversed
+            ? '逆位并不等于凶，更像这股力量还没顺过来，或用力过了头'
+            : '正位，这股力量目前是通的';
+          const guide = ((POS_GUIDE[spread] || {})[c.position || (SPREAD_POS[spread] || [])[i]]) || '';
+          const posName = c.position || (SPREAD_POS[spread] || [])[i] || ('第' + (i + 1) + '张');
+          return posName + (guide ? '（' + guide + '）' : '') + '是「' + c.card.name_zh + '」'
+            + (c.reversed ? '逆位' : '正位') + '：' + kws + '。' + img + ast + (el ? '落在' + el + '，' : '') + core + oriNote + '。';
+        });
+        paras.push(lines.join(''));
+      }
+
+      const majorCount = list.filter((c) => c.card.kind === 'major').length;
+      const revCount = list.filter((c) => c.reversed).length;
+      const upCount = n - revCount;
+      const elementCount = {};
+      for (const c of list) {
+        const e = (richOf(c.card.id) || {}).element || '';
+        if (e) elementCount[e] = (elementCount[e] || 0) + 1;
+      }
+      const present = ELEMENT_ORDER.filter((e) => elementCount[e]);
+      const missing = ELEMENT_ORDER.filter((e) => !elementCount[e]);
+      const dominant = present.slice().sort((a, b) => elementCount[b] - elementCount[a])[0];
+      const heavy = dominant && elementCount[dominant] * 2 >= n;
+      const majorHalf = majorCount * 2 >= n;
+      const courtCount = list.filter((c) => COURT_NAMES.some((k) => c.card.name_zh.endsWith(k))).length;
+      const pct = Math.round((majorCount / n) * 100);
+      const distribution = present.map((e) => e + '×' + elementCount[e]).join('、');
+      paras.push([
+        n + ' 张里有 ' + majorCount + ' 张大阿卡纳（占 ' + pct + '%），' + (majorHalf
+          ? '达到或超过半数，说明这是「主题层面的大事」，牵动的多半是方向与阶段，而不是细节执行'
+          : '不到半数，重点更偏日常层面的推进，先看具体的人与事') + '。',
+        '元素分布：' + (distribution || '无') + '（大牌按黄金黎明的元素归属计入，仅作象征参考）；' + (missing.length
+          ? '缺' + missing.map((e) => e + '（' + ELEM_NAME[e] + '）').join('、') + '，这一块容易被忽略'
+          : '四种元素都在，配比还算均衡') + (heavy ? '。' + dominant + '偏旺，这股力量用得过头会压住别的部分' : '') + '。',
+        '宫廷牌 ' + courtCount + ' 张，' + (courtCount
+          ? '说明局面里有具体的人（也可能是你某个侧面的状态）在推动'
+          : '没有明显人格化的角色，事情更靠情势本身在走') + '；正逆位 ' + upCount + ' 正 ' + revCount + ' 逆，' + (upCount > revCount
+          ? '整体偏顺，逆位那张是全盘的关节'
+          : (upCount === revCount ? '顺逆各半，正处在拉扯与转换中' : '阻力偏多，先把卡住的部分读透，再谈推进')) + '。',
+      ].join(''));
+
+      const majorCard = list.find((c) => c.card.kind === 'major');
+      const revCard = list.find((c) => c.reversed);
+      const key = majorCard || revCard || list[0];
+      const keyReason = majorCard
+        ? '它出现的地方，往往就是这件事真正被牵动的层级'
+        : (revCard
+          ? '全盘没有大阿卡纳，关节就落在第一张逆位上——那股还没顺过来的力量'
+          : '全盘既没有大阿卡纳也没有逆位，走势平顺，就以第一张为参照');
+      const keyCore = (richOf(key.card.id) || {}).core ? '，' + richOf(key.card.id).core : '';
+      const keyPos = key.position || (SPREAD_POS[spread] || [])[list.indexOf(key)] || ('第 ' + (list.indexOf(key) + 1) + ' 张');
+      paras.push('全盘的关节是「' + key.card.name_zh + '」（' + keyPos + '·' + (key.reversed ? '逆位' : '正位') + '）' + keyCore + '。' + keyReason + '；其余几张可以看作它在不同位置上的回声。');
+
+      const tips = [];
+      if (revCard) tips.push('先把「' + revCard.card.name_zh + '」逆位指出的卡点处理掉（' + ((revCard.meaning && revCard.meaning.keywords) || []).join('、') + '），暂时不要加码推进');
+      if (majorHalf) tips.push('把问题从「怎么办」换成「要不要」：先定方向，方法再慢慢补');
+      else tips.push('把注意力放回能立刻做的小事上，先动一件，再看牌面怎么变');
+      if (missing.length) tips.push('补一点' + missing[0] + '的力量：' + ELEM_TIP[missing[0]]);
+      else if (heavy) tips.push(dominant + '已经偏旺，' + ELEM_WARN[dominant]);
+      // 注意：客户端的 picks 没有 position 字段（位置由 SPREAD_POS 按序号给），
+      // 所以这里必须用序号兜底，否则「建议位」那张永远找不到，建议会少一条。
+      const advicePos = SPREAD_POS[spread] || [];
+      const adviceCard = list.find((c, i) => (c.position || advicePos[i]) === '建议');
+      if (adviceCard) tips.push('把「' + adviceCard.card.name_zh + '」' + (adviceCard.reversed ? '逆位' : '正位') + '的关键词（' + ((adviceCard.meaning && adviceCard.meaning.keywords) || []).join('、') + '）当作接下来一周的小练习');
+      const picked = tips.slice(0, 3);
+      paras.push('建议：其一，' + picked[0] + '；其二，' + picked[1] + (picked[2] ? '；其三，' + picked[2] : '') + '。');
+
+      paras.push('牌是镜子，照出的是你此刻的状态与盲点，不是命运的判决书。涉及医疗、法律、财务等重大决定，请务必咨询对应的专业人士，牌面只用来帮你把问题问清楚。');
+      return paras;
+    }
+
+    // 短摘要：按段位确定性取（开场 + 关键牌段 + 建议段），供卡片折叠态用
+    function readingSummary(picks, spread, question, direction) {
+      const paras = richReading(picks, spread, question, direction);
+      if (paras.length <= 3) return paras.join('\n\n');
+      const keyIdx = Math.max(1, paras.length - 3);
+      return [paras[0], paras[keyIdx], paras[paras.length - 2]].filter(Boolean).join('\n\n');
+    }
+
+    function readingFullText(picks, spread, question, direction, seed) {
+      const head = '【' + ((SPREAD_NAME[spread]) || spread) + '】'
+        + (DIRECTION_LABEL[direction] ? ' · ' + DIRECTION_LABEL[direction] : '')
+        + (question ? ' 所问：' + question : '');
+      return head + '\n\n' + richReading(picks, spread, question, direction).join('\n\n')
+        // 存档号留着便于核对；「怎么再看一次」直接给操作路径，不再甩一句「同种子可复现」
+        + (seed !== undefined && seed !== null
+          ? '\n\n（存档号 ' + seed + ' · 想再看这一局：塔罗页点「重放」，或到「历史」里找这条）'
+          : '');
+    }
+
     // ── 星座运势引擎 ────────────────────────────────────────────────
     function strHash(str) {
       let h = 2166136261;
@@ -1569,8 +2077,10 @@ window.__ModuleLoader__.load({
     }
 
     // 月相 + 月亮星座（近似：平均黄经 + 主异常项，误差约 ±10°，够做气氛）
+    // 朔望周期提到函数外：moonInfo / moonDayKind / nextMoonDay 共用同一个常量
+    const SYN = 29.530588853;
+
     function moonInfo(date) {
-      const SYN = 29.530588853;
       const ref = Date.UTC(2000, 0, 6, 18, 14) / 86400000;
       const d = date.getTime() / 86400000 - ref;
       const age = ((d % SYN) + SYN) % SYN;
@@ -1829,7 +2339,13 @@ window.__ModuleLoader__.load({
     function loadWishes() {
       try {
         const got = JSON.parse(window.localStorage.getItem(WISH_KEY) || '[]');
-        return Array.isArray(got) ? got.filter((w) => w && w.id && w.openAt) : [];
+        if (!Array.isArray(got)) return [];
+        // 老记录没有 fate：一律当「还没回看」，不替用户猜是收下还是放下
+        // 判空而不是判真值：id 若为 0 会被 `w.id` 的真值判断误删
+        return got.filter((w) => w && w.id != null && w.openAt).map((w) => Object.assign({}, w, {
+          fate: w.fate === 'released' ? 'released' : (w.fate === 'kept' ? 'kept' : null),
+          reviewedAt: w.reviewedAt || null,
+        }));
       } catch (error) { return []; }
     }
 
@@ -1837,14 +2353,24 @@ window.__ModuleLoader__.load({
       try { window.localStorage.setItem(WISH_KEY, JSON.stringify(list.slice(0, 40))); } catch (error) { /* 忽略 */ }
     }
 
-    // 下一个新月（age≈0）/ 满月（age≈14.77）：从明天起逐日找第一个对上的日子
+    // 朔望判定（全工程唯一口径）：age 距 0 / 14.765 半天内（0.55 天）。
+    // phaseIdx 只用于展示（月相名、30 天带的亮度），不参与「提醒说满月、许愿瓶说还没到」这类判定。
+    function moonDayKind(date) {
+      const age = moonInfo(date || new Date()).age;
+      const near = (target) => Math.min(Math.abs(age - target), Math.abs(age - SYN - target)) <= 0.55;
+      if (near(0)) return 'newmoon';
+      if (near(14.765)) return 'fullmoon';
+      return null;
+    }
+
+    function isNewMoonDay(date) { return moonDayKind(date) === 'newmoon'; }
+    function isFullMoonDay(date) { return moonDayKind(date) === 'fullmoon'; }
+
+    // 下一个新月 / 满月：从明天起逐日找第一个命中同一判定的日子
     function nextMoonDay(kind) {
-      const target = kind === 'newmoon' ? 0 : 14.765;
       for (let i = 1; i <= 32; i += 1) {
         const d = new Date(Date.now() + i * 86400000);
-        const age = moonInfo(d).age;
-        const diff = Math.min(Math.abs(age - target), Math.abs(age - 29.530588853 - target));
-        if (diff <= 0.55) return isoDay(d);
+        if (moonDayKind(d) === kind) return isoDay(d);
       }
       return isoDay(new Date(Date.now() + 30 * 86400000));
     }
@@ -1908,6 +2434,21 @@ window.__ModuleLoader__.load({
       try { window.localStorage.setItem(REMIND_KEY, JSON.stringify(rec)); } catch (error) { /* 忽略 */ }
     }
 
+    // ── W5 月相提醒：今天说过没有（与每日一牌分开一格，两者互不顶替）──
+    const MOONREMIND_KEY = 'srs.moonremind.v1';
+
+    function loadMoonRemind() {
+      try {
+        const raw = window.localStorage.getItem(MOONREMIND_KEY);
+        const got = raw ? JSON.parse(raw) : null;
+        return got && got.d ? got : null;
+      } catch (error) { return null; }
+    }
+
+    function saveMoonRemind(rec) {
+      try { window.localStorage.setItem(MOONREMIND_KEY, JSON.stringify(rec)); } catch (error) { /* 忽略 */ }
+    }
+
     function hhmmLabel(hh, mm) {
       return String(hh).padStart(2, '0') + ':' + String(mm).padStart(2, '0');
     }
@@ -1943,115 +2484,6 @@ window.__ModuleLoader__.load({
       return out;
     }
 
-    function loadImage(src) {
-      return new Promise((resolve, reject) => {
-        const img = new window.Image();
-        img.crossOrigin = 'anonymous';
-        img.onload = () => resolve(img);
-        img.onerror = () => reject(new Error('image load failed'));
-        img.src = src;
-      });
-    }
-
-    async function renderResultCard(opts) {
-      // 两种规格（W14）：9:16 竖图 1080×1920（抖音/朋友圈）、3:4 小红书 1080×1440。
-      // 纵向按 k 等比缩，字号与牌面跟着缩，版式不变形。
-      const H = opts && opts.ratio === '34' ? 1440 : 1920;
-      const W = 1080;
-      const k = H / 1920;
-      const S = (v) => Math.round(v * k);
-      const canvas = document.createElement('canvas');
-      canvas.width = W;
-      canvas.height = H;
-      const ctx = canvas.getContext('2d');
-
-      // 底：深蓝渐变
-      const g = ctx.createLinearGradient(0, 0, 0, H);
-      g.addColorStop(0, '#10182B');
-      g.addColorStop(0.55, '#0E1424');
-      g.addColorStop(1, '#0A1020');
-      ctx.fillStyle = g;
-      ctx.fillRect(0, 0, W, H);
-
-      // 金色细边
-      ctx.strokeStyle = 'rgba(201,164,92,.55)';
-      ctx.lineWidth = 3;
-      ctx.strokeRect(36, 36, W - 72, H - 72);
-
-      // 顶部：小标 + 日期
-      ctx.fillStyle = '#C9A45C';
-      ctx.font = S(32) + 'px "Microsoft YaHei", sans-serif';
-      ctx.textAlign = 'center';
-      ctx.fillText('SORCERESS · 今日一牌', W / 2, S(140));
-
-      ctx.fillStyle = '#9A907C';
-      ctx.font = S(30) + 'px "Microsoft YaHei", sans-serif';
-      ctx.fillText(opts.date, W / 2, S(196));
-
-      // 牌面
-      const cardW = S(520);
-      const cardH = S(780);
-      const cx = (W - cardW) / 2;
-      const cy = S(260);
-      if (opts.cardSrc) {
-        try {
-          const img = await loadImage(opts.cardSrc);
-          if (opts.reversed) {
-            ctx.save();
-            ctx.translate(W / 2, cy + cardH / 2);
-            ctx.rotate(Math.PI);
-            ctx.drawImage(img, -cardW / 2, -cardH / 2, cardW, cardH);
-            ctx.restore();
-          } else {
-            ctx.drawImage(img, cx, cy, cardW, cardH);
-          }
-          ctx.strokeStyle = 'rgba(201,164,92,.8)';
-          ctx.lineWidth = 2;
-          ctx.strokeRect(cx, cy, cardW, cardH);
-        } catch (error) { /* 图没加载出来就留空 */ }
-      }
-
-      // 牌名 + 正逆
-      let y = cy + cardH + S(96);
-      ctx.fillStyle = '#EFE3CB';
-      ctx.font = 'bold ' + S(56) + 'px "Microsoft YaHei", serif';
-      ctx.fillText(opts.name, W / 2, y);
-      y += S(56);
-      ctx.fillStyle = '#C9A45C';
-      ctx.font = S(34) + 'px "Microsoft YaHei", sans-serif';
-      ctx.fillText(opts.orientation + '　' + opts.numeral, W / 2, y);
-
-      // 判词
-      y += S(78);
-      ctx.textAlign = 'left';
-      ctx.fillStyle = '#D6C7AA';
-      ctx.font = S(36) + 'px "Microsoft YaHei", sans-serif';
-      const maxW = W - 220;
-      (opts.lines || []).slice(0, 4).forEach((line) => {
-        wrapText(ctx, line, maxW).forEach((seg) => {
-          ctx.fillText(seg, 110, y);
-          y += S(58);
-        });
-        y += S(10);
-      });
-
-      // 关键词
-      if (opts.keywords && opts.keywords.length) {
-        y += S(10);
-        ctx.fillStyle = '#9A907C';
-        ctx.font = S(30) + 'px "Microsoft YaHei", sans-serif';
-        ctx.fillText(opts.keywords.join('　·　'), 110, y);
-      }
-
-      // 页脚
-      ctx.textAlign = 'center';
-      ctx.fillStyle = '#7E7666';
-      ctx.font = S(28) + 'px "Microsoft YaHei", sans-serif';
-      ctx.fillText('只给倾向，不预测结果　·　Sorceress', W / 2, H - S(110));
-
-      return canvas;
-    }
-
     function downloadDataUrl(dataUrl, name) {
       const a = document.createElement('a');
       a.href = dataUrl;
@@ -2062,7 +2494,45 @@ window.__ModuleLoader__.load({
       try { window.__srsLastExport = { name: name, size: dataUrl.length }; } catch (error) { /* 忽略 */ }
     }
 
-    // ── 星座运势卡导出（N5）：1080×1920 ─────────────────────────
+    // ── 星座运势卡导出（N5）：1080×1920，深蓝星夜底图 ─────────────
+    function loadImg(src) {
+      return new Promise((resolve, reject) => {
+        const img = new window.Image();
+        img.crossOrigin = 'anonymous';
+        img.onload = () => resolve(img);
+        img.onerror = () => reject(new Error('image load failed'));
+        img.src = src;
+      });
+    }
+
+    function roundRect(ctx, x, y, w, h, r) {
+      const rr = Math.min(r, h / 2, w / 2);
+      ctx.beginPath();
+      ctx.moveTo(x + rr, y);
+      ctx.arcTo(x + w, y, x + w, y + h, rr);
+      ctx.arcTo(x + w, y + h, x, y + h, rr);
+      ctx.arcTo(x, y + h, x, y, rr);
+      ctx.arcTo(x, y, x + w, y, rr);
+      ctx.closePath();
+    }
+
+    function withShadow(ctx, fn, blur) {
+      ctx.save();
+      ctx.shadowColor = 'rgba(0,0,0,.62)';
+      ctx.shadowBlur = blur || 8;
+      ctx.shadowOffsetY = 1;
+      fn();
+      ctx.restore();
+    }
+
+    // 分区配色：四维各一个色，避免整张图只有一种金
+    const HORO_ACCENT = {
+      事业: { main: '#E9C77E', soft: '#F3DFAE' },
+      感情: { main: '#E8A0B0', soft: '#F3C4CF' },
+      财运: { main: '#8FD3AE', soft: '#BCE8CF' },
+      身心: { main: '#8FC4DD', soft: '#BFE0EE' },
+    };
+
     async function renderHoroCard(opts) {
       const W = 1080;
       const H = 1920;
@@ -2071,98 +2541,152 @@ window.__ModuleLoader__.load({
       canvas.height = H;
       const ctx = canvas.getContext('2d');
 
-      const g = ctx.createLinearGradient(0, 0, 0, H);
-      g.addColorStop(0, '#10182B');
-      g.addColorStop(0.55, '#0E1424');
-      g.addColorStop(1, '#0A1020');
-      ctx.fillStyle = g;
+      // ① 底：竖版星空山谷（自带金色画框）。直接拉伸铺满 1080×1920——
+      //    画框正好落在卡片四周，所有文字都收在框内，比「按宽等比+上下补边」整齐。
+      ctx.fillStyle = '#0B1220';
       ctx.fillRect(0, 0, W, H);
-      ctx.strokeStyle = 'rgba(201,164,92,.55)';
-      ctx.lineWidth = 3;
-      ctx.strokeRect(36, 36, W - 72, H - 72);
+      try {
+        const bg = await loadImg(UI.horoBg);
+        ctx.drawImage(bg, 0, 0, W, H);
+      } catch (error) {
+        ctx.fillStyle = '#0B1220';
+        ctx.fillRect(0, 0, W, H);
+      }
+      // 薄暗：山谷与月亮偏亮，按上/中/下分层压暗，底部（花丛）压最狠，保证文字读得清
+      const scrim = ctx.createLinearGradient(0, 0, 0, H);
+      scrim.addColorStop(0, 'rgba(6,10,20,.46)');
+      scrim.addColorStop(0.34, 'rgba(6,10,20,.34)');
+      scrim.addColorStop(0.72, 'rgba(6,10,20,.42)');
+      scrim.addColorStop(1, 'rgba(4,8,16,.72)');
+      ctx.fillStyle = scrim;
+      ctx.fillRect(0, 0, W, H);
 
+      // ③ 页眉
       ctx.textAlign = 'center';
-      ctx.fillStyle = '#C9A45C';
-      ctx.font = '32px "Microsoft YaHei", sans-serif';
-      ctx.fillText('SORCERESS · 今日运势', W / 2, 130);
-      ctx.fillStyle = '#9A907C';
-      ctx.font = '28px "Microsoft YaHei", sans-serif';
-      ctx.fillText(opts.date, W / 2, 182);
+      ctx.textBaseline = 'alphabetic';
+      ctx.fillStyle = '#E3C588';
+      ctx.font = '600 30px "Microsoft YaHei", sans-serif';
+      ctx.fillText('S O R C E R E S S · 今 日 运 势', W / 2, 126);
+      ctx.fillStyle = 'rgba(201,164,92,.45)';
+      ctx.fillRect(W / 2 - 150, 148, 300, 1);
+      ctx.fillStyle = '#A79C86';
+      ctx.font = '26px "Microsoft YaHei", sans-serif';
+      ctx.fillText(opts.date, W / 2, 192);
 
-      // 星座（不画 ♈ 这类符号：canvas 里会走 emoji 字体，印出来是个彩色方图）
+      // ④ 星座名（大字）+ 金色下划光带
+      ctx.fillStyle = '#F6EBD2';
+      ctx.font = 'bold 88px "Microsoft YaHei", serif';
+      ctx.fillText(opts.sign, W / 2, 306);
+      const glow = ctx.createLinearGradient(W / 2 - 220, 0, W / 2 + 220, 0);
+      glow.addColorStop(0, 'rgba(227,197,136,0)');
+      glow.addColorStop(0.5, 'rgba(227,197,136,.85)');
+      glow.addColorStop(1, 'rgba(227,197,136,0)');
+      ctx.fillStyle = glow;
+      ctx.fillRect(W / 2 - 220, 330, 440, 2);
+      ctx.fillStyle = '#C3B393';
+      ctx.font = '27px "Microsoft YaHei", sans-serif';
+      ctx.fillText(opts.range + '　·　' + opts.element + ' · ' + opts.ruler, W / 2, 380);
+
+      // ⑤ 一句话总纲：带引号色块
+      ctx.fillStyle = 'rgba(227,197,136,.10)';
+      roundRect(ctx, 96, 424, W - 192, 132, 14);
+      ctx.fill();
       ctx.fillStyle = '#EFE3CB';
-      ctx.font = 'bold 84px "Microsoft YaHei", serif';
-      ctx.fillText(opts.sign, W / 2, 300);
-      ctx.fillStyle = '#9A907C';
-      ctx.font = '28px "Microsoft YaHei", sans-serif';
-      ctx.fillText(opts.range + '　·　' + opts.element + ' · ' + opts.ruler, W / 2, 352);
-
-      // 一句话总纲
-      ctx.fillStyle = '#D6C7AA';
-      ctx.font = '36px "Microsoft YaHei", sans-serif';
-      let y = 432;
-      wrapText(ctx, opts.mood || '', W - 220).slice(0, 3).forEach((seg) => {
-        ctx.fillText(seg, W / 2, y);
-        y += 56;
+      ctx.font = '35px "Microsoft YaHei", sans-serif';
+      wrapText(ctx, opts.mood || '', W - 300).slice(0, 2).forEach((seg, i) => {
+        ctx.fillText(seg, W / 2, 492 + i * 50);
       });
 
-      // 四维
-      y += 26;
+      // ⑥ 四维：标签 + 星级（亮/暗分色）+ 文案，按分区配色
+      let y = 650;
       ctx.textAlign = 'left';
       (opts.domains || []).forEach((d) => {
-        ctx.fillStyle = '#C9A45C';
-        ctx.font = '34px "Microsoft YaHei", sans-serif';
-        ctx.fillText(d.label, 110, y);
-        ctx.fillStyle = '#E3C588';
-        ctx.fillText(d.stars, 250, y);
-        ctx.fillStyle = '#B9AC93';
-        ctx.font = '30px "Microsoft YaHei", sans-serif';
-        wrapText(ctx, d.text, W - 460).slice(0, 2).forEach((seg, i) => {
-          ctx.fillText(seg, 470, y + i * 44);
-        });
-        y += 118;
+        const ac = HORO_ACCENT[d.label] || { main: '#E9C77E', soft: '#F3DFAE' };
+        // 左侧色条
+        ctx.fillStyle = ac.main;
+        ctx.fillRect(96, y - 26, 4, 34);
+        ctx.fillStyle = ac.main;
+        ctx.font = '600 34px "Microsoft YaHei", sans-serif';
+        ctx.fillText(d.label, 116, y);
+        // 星级：实心用分区色，空心用低透明（stars 可能是 1-5 的数字，也可能是 ★☆ 串）
+        const filled = typeof d.stars === 'number'
+          ? Math.max(0, Math.min(5, d.stars))
+          : (String(d.stars || '').match(/★/g) || []).length;
+        ctx.font = '32px "Microsoft YaHei", sans-serif';
+        ctx.fillStyle = ac.soft;
+        ctx.fillText('★'.repeat(filled), 242, y);
+        const fw = ctx.measureText('★'.repeat(filled)).width;
+        ctx.fillStyle = 'rgba(160,150,132,.42)';
+        ctx.fillText('☆'.repeat(Math.max(0, 5 - filled)), 242 + fw, y);
+        // 文案：宽度给足，最多两行（垫一层投影，压在山谷上也清楚）
+        ctx.fillStyle = '#E3D9C4';
+        ctx.font = '28px "Microsoft YaHei", sans-serif';
+        withShadow(ctx, () => {
+          wrapText(ctx, d.text, W - 540).slice(0, 2).forEach((seg, i) => {
+            ctx.fillText(seg, 470, y + i * 40);
+          });
+        }, 10);
+        y += 148;
       });
 
-      // 宜 / 忌
-      y += 10;
-      ctx.fillStyle = '#8FBF9A';
-      ctx.font = '34px "Microsoft YaHei", sans-serif';
-      ctx.fillText('宜　' + (opts.doIt || []).join(' · '), 110, y);
-      y += 56;
-      ctx.fillStyle = '#D9A489';
-      ctx.fillText('忌　' + (opts.avoid || []).join(' · '), 110, y);
+      // ⑦ 宜 / 忌：两枚圆角色块
+      const pillW = W - 192;
+      let py = 1212;
+      ctx.fillStyle = 'rgba(120,200,150,.14)';
+      roundRect(ctx, 96, py, pillW, 62, 12);
+      ctx.fill();
+      ctx.fillStyle = '#9FE0B4';
+      ctx.font = '600 31px "Microsoft YaHei", sans-serif';
+      ctx.fillText('宜　' + (opts.doIt || []).join(' · '), 120, py + 42);
+      py += 80;
+      ctx.fillStyle = 'rgba(230,150,130,.14)';
+      roundRect(ctx, 96, py, pillW, 62, 12);
+      ctx.fill();
+      ctx.fillStyle = '#F0A995';
+      ctx.font = '600 31px "Microsoft YaHei", sans-serif';
+      ctx.fillText('忌　' + (opts.avoid || []).join(' · '), 120, py + 42);
 
-      // 幸运
-      y += 78;
-      ctx.fillStyle = '#C9A45C';
-      ctx.font = '34px "Microsoft YaHei", sans-serif';
-      ctx.fillText('幸运', 110, y);
-      ctx.fillStyle = '#EFE3CB';
-      ctx.fillText((opts.color ? opts.color[0] : '—') + '　·　' + (opts.number || '—') + '　·　' + (opts.slot || '—'), 250, y);
+      // ⑧ 幸运：色名/数字/时段 + 一条渐变彩带
+      y = 1424;
+      ctx.fillStyle = '#E3C588';
+      ctx.font = '600 34px "Microsoft YaHei", sans-serif';
+      ctx.fillText('幸运', 96, y);
+      ctx.fillStyle = '#F2E7CE';
+      ctx.font = '32px "Microsoft YaHei", sans-serif';
+      ctx.fillText((opts.color ? opts.color[0] : '—') + '　·　' + (opts.number || '—') + '　·　' + (opts.slot || '—'), 246, y);
       if (opts.color) {
-        ctx.fillStyle = opts.color[1];
-        ctx.fillRect(110, y + 22, 860, 10);
+        const cg = ctx.createLinearGradient(96, 0, W - 96, 0);
+        cg.addColorStop(0, opts.color[1]);
+        cg.addColorStop(1, 'rgba(201,164,92,0)');
+        ctx.fillStyle = cg;
+        roundRect(ctx, 96, y + 20, W - 192, 9, 4.5);
+        ctx.fill();
       }
 
-      // 天象
-      y += 96;
-      ctx.fillStyle = '#9A907C';
-      ctx.font = '28px "Microsoft YaHei", sans-serif';
-      ctx.fillText(opts.sky || '', 110, y);
+      // ⑨ 天象
+      y += 86;
+      ctx.fillStyle = 'rgba(186,176,156,.94)';
+      ctx.font = '27px "Microsoft YaHei", sans-serif';
+      withShadow(ctx, () => ctx.fillText(opts.sky || '', 96, y), 8);
 
-      // 女巫一句话
+      // ⑩ 女巫一句话（斜体 + 金色分隔）
       ctx.textAlign = 'center';
-      ctx.fillStyle = '#E7D9BC';
+      ctx.fillStyle = 'rgba(227,197,136,.35)';
+      ctx.fillRect(W / 2 - 60, 1620, 120, 1);
+      ctx.fillStyle = '#F6E8C6';
       ctx.font = 'italic 36px "Microsoft YaHei", serif';
-      let wy = H - 240;
-      wrapText(ctx, opts.witch || '', W - 240).slice(0, 3).forEach((seg) => {
-        ctx.fillText(seg, W / 2, wy);
-        wy += 52;
-      });
+      let wy = 1690;
+      withShadow(ctx, () => {
+        wrapText(ctx, opts.witch || '', W - 260).slice(0, 3).forEach((seg) => {
+          ctx.fillText(seg, W / 2, wy);
+          wy += 52;
+        });
+      }, 12);
 
-      ctx.fillStyle = '#7E7666';
-      ctx.font = '28px "Microsoft YaHei", sans-serif';
-      ctx.fillText('只给倾向，不预测结果　·　Sorceress', W / 2, H - 96);
+      // ⑪ 页脚
+      ctx.fillStyle = 'rgba(178,168,150,.92)';
+      ctx.font = '25px "Microsoft YaHei", sans-serif';
+      withShadow(ctx, () => ctx.fillText('只给倾向，不预测结果　·　Sorceress', W / 2, H - 92), 8);
 
       return canvas;
     }
@@ -2208,7 +2732,10 @@ window.__ModuleLoader__.load({
     }
 
     // ── W9 月度回顾 / W10 反复出现的牌：只数抽过的牌，不做推断 ─────────
-    const SPREAD_NAME = { daily: '今日一牌', one: '单张', three: '三张', celtic: '凯尔特十张' };
+    const SPREAD_NAME = {
+      daily: '今日一牌', one: '单张', three: '过去现在未来', five: '五张局势',
+      relation: '关系阵', celtic: '凯尔特十字', either: '二选一',
+    };
 
     function reviewOf(hist, now) {
       const day = now || new Date();
@@ -2268,31 +2795,6 @@ window.__ModuleLoader__.load({
       return out;
     }
 
-    // ── W11 双人牌：一人一张，只写关系现状与可能 ────────────────────
-    function duoReading(picks) {
-      if (!picks || picks.length < 2) return null;
-      const a = picks[0];
-      const b = picks[1];
-      const line = (r) => ((r.meaning && r.meaning.lines) || [])[0] || '';
-      const bothUp = !a.reversed && !b.reversed;
-      const bothRev = a.reversed && b.reversed;
-      const tone = bothUp
-        ? '两张都正着，关系在往前走，节奏是顺的。'
-        : (bothRev
-          ? '两张都逆着，此刻更像各自在原地打转，先别急着定义它。'
-          : (a.reversed ? '你这边收着，对方那边开着，差的不是心意是表达。'
-            : '你这边开着，对方那边收着，别用追问去要一个回应。'));
-      return {
-        tone,
-        line: '你的牌说「' + line(a) + '」；对方的牌说「' + line(b) + '」',
-        tips: [
-          '把最想说的一句写下来，只留那一句，找机会说出来。',
-          '这周留一件只属于你自己的事，不必报备。',
-          '想确认关系时，先说自己的感受，再问他的想法。',
-        ],
-      };
-    }
-
     // ── 主组件 ─────────────────────────────────────────────────────
     function Widget() {
       React.useEffect(ensureStyle, []);
@@ -2309,6 +2811,9 @@ window.__ModuleLoader__.load({
       const [tab, setTab] = React.useState('tarot');
       // 星座页「现在看哪个星座」：只影响这一页的展示，绝不回写档案生日
       const [viewSign, setViewSign] = React.useState(null);
+      // 当前星座页真正在看的星座 id：渲染时写进来，导出存图按它取数
+      // （事件监听器在较早的 render 里注册，直接读 viewSign 会拿到旧闭包）
+      const signRef = React.useRef(null);
       // 周期日历看的月份（m 从 0 起）
       const [calYm, setCalYm] = React.useState(() => {
         const d = new Date();
@@ -2338,8 +2843,16 @@ window.__ModuleLoader__.load({
       const [pinErr, setPinErr] = React.useState('');
       const [priv, setPriv] = React.useState(null);             // 解密后的私密数据
       const [billQ, setBillQ] = React.useState('');             // 明细搜索词（模型 / 日期 / 金额）
+      // 明细只铺最新 20 条：账本上限 500 条，全量渲染会把面板拉成一万像素高。
+      // 内层滚动区滚到底再自动续 20 条，「再看 20 条」按钮兜底（滚轮/触屏失灵时也能翻）。
+      const [billLimit, setBillLimit] = React.useState(20);
+      // 「送进对话」发送状态（底部自由输入框已移除，这里只服务解读区的送对话按钮）
+      const [chatBusy, setChatBusy] = React.useState(false);
       const [wishes, setWishes] = React.useState(loadWishes);   // W17 许愿瓶
       const [wishWhen, setWishWhen] = React.useState('newmoon'); // 开启时机
+      // W5：当天是朔望日时带过来的提示（'newmoon' | 'fullmoon' | null），
+      // 用来改输入框引导语、并在满月时把回看推到显眼处；只活在本次会话里
+      const [moonHint, setMoonHint] = React.useState(null);
       // 原生监听里的闭包读不到最新 state（铁律 14），另存 ref
       const wishesRef = React.useRef(wishes);
       wishesRef.current = wishes;
@@ -2359,11 +2872,15 @@ window.__ModuleLoader__.load({
       const [results, setResults] = React.useState([]);   // 三张牌阵用
       // 三张牌阵：一张一张挑，已翻开的牌依次落到下面等待区（每项 { idx, card, reversed, meaning }）
       const [picked, setPicked] = React.useState([]);
-      const [divineMode, setDivineMode] = React.useState('daily');
       const [bubbleEdit, setBubbleEdit] = React.useState(null);   // 非空 = 正在编辑某组台词
       const [dailyCard, setDailyCard] = React.useState(loadDailyCard);
       const [mood, setMood] = React.useState(loadMood);
       const [moodPick, setMoodPick] = React.useState(null);      // { card, reversed, empathy }
+      // 心情页抽牌动效：洗牌 450ms → 翻转 380ms（塔罗那套是 640ms，这里轻一档）
+      const [moodBusy, setMoodBusy] = React.useState(false);
+      const [moodShuffling, setMoodShuffling] = React.useState(false);
+      const [moodSeq, setMoodSeq] = React.useState(0);           // 递增 key：强制重挂载，动画才会重播
+      const moodBusyRef = React.useRef(false);                    // 同步防连点（state 在闭包里会滞后）
       const [histOpen, setHistOpen] = React.useState(false);
       const [deckOpen, setDeckOpen] = React.useState(false);     // T6 牌库图鉴：78 张全可查
       const [deckPick, setDeckPick] = React.useState(null);      // 正在看的那张牌 id
@@ -2371,10 +2888,14 @@ window.__ModuleLoader__.load({
       const [deckGroup, setDeckGroup] = React.useState('major'); // 牌库当前花色
       const [histVer, setHistVer] = React.useState(0);            // 删/清空后自增，触发重读
       const [exporting, setExporting] = React.useState(false);   // daily | either | relation
-      const [divineCards, setDivineCards] = React.useState([]);
-      const [divineBusy, setDivineBusy] = React.useState(false);
+      // 富解读展开态（纯 UI，不落 localStorage；和配置页「牌义 简/详」是两个正交维度）
+      const [readingOpen, setReadingOpen] = React.useState(false);
+      // 所问之事（一句话）：只进解读开场，不参与抽牌随机；不落盘，换一局可清空
+      const [question, setQuestion] = React.useState('');
+      // 多张牌阵的必填校验：qErr 非空即显示红字并把输入框标红
+      const [qErr, setQErr] = React.useState('');
+      const qInputRef = React.useRef(null);
       // 每次抽牌 +1，用来换掉卡片节点的 key —— key 变了才重挂载，翻牌动画才会从头再放一遍
-      const [divineSeq, setDivineSeq] = React.useState(0);
       const [daily, setDaily] = React.useState(() => {
         try { return JSON.parse(window.localStorage.getItem('srs.daily.v1') || 'null'); } catch (error) { return null; }
       });
@@ -2415,8 +2936,11 @@ window.__ModuleLoader__.load({
       // 播报去重：seq（结到第几轮）+ kind:id（哪一件挂起），跨轮记住上一次已经吵过什么
       const liveSeqRef = React.useRef(0);
       const waitSeenRef = React.useRef('');
+      const moodSeenRef = React.useRef(0);    // D3：上次反应过的 mood.ts，同一条不重复
+      const srsToolSeenRef = React.useRef(0); // D5：上次反应过的 srsTool.seq
       const specialUntilRef = React.useRef(0);   // 账目播报显示到什么时候，期间闲置自语与换姿势都让位
       const remindDoneRef = React.useRef(loadRemindState());   // C8：哪天已经提醒过/已抽过
+      const moonRemindRef = React.useRef(loadMoonRemind());    // W5：月相提醒今天说过没有
       const poseTimer = React.useRef(null);
       const chatTimer = React.useRef(null);
       const gestureTimer = React.useRef(null);
@@ -2430,14 +2954,14 @@ window.__ModuleLoader__.load({
       const talkMode = (cfg.talk === 'quiet' || cfg.talk === 'chatty') ? cfg.talk : 'normal';
       const posePinned = !!POSE_LABEL[cfg.posePin];
       // 自动模式（2026-11-18 修）：原来恒等于 'idle-a'，于是静止时永远是同一张，
-      // 只有小动作那 5 张在换 —— 主人报「自动还是固定的那几个」就是这个原因。
-      // 现在自动 = 在这一组「站得住」的姿势之间每 4–8 分钟换一次；
-      // 抽牌流程（洗牌/摊牌/抽牌/翻牌）、打盹、告别仍是流程姿势，不进这个池。
-      const STAND_POSES = ['idle-a', 'rest-hands', 'think', 'look-aside', 'dazed',
-        'hold-cup', 'stretch', 'reading', 'smile', 'smirk', 'annoyed'];
-      const [autoPose, setAutoPose] = React.useState(
-        () => STAND_POSES[Math.floor(Math.random() * STAND_POSES.length)]
-      );
+      // 自动 = 在 14 张「站得住」的姿势之间轮换；用洗牌袋，一轮走完全部才重洗。
+      // 抽牌流程（洗牌/摊牌/抽牌/翻牌）、打盹仍是流程姿势，不进这个池。
+      const standBagRef = React.useRef(null);
+      const [autoPose, setAutoPose] = React.useState(() => {
+        const first = drawStandPose(null, '');
+        standBagRef.current = first.bag;
+        return first.pose;
+      });
       const homePose = posePinned ? cfg.posePin : autoPose;
       const cfgPoseRef = React.useRef(homePose);
       cfgPoseRef.current = homePose;
@@ -2450,31 +2974,66 @@ window.__ModuleLoader__.load({
       // 固定姿态一变（含页面刚打开就有 posePin）立刻生效，别等 6 秒的「回闲置」定时器
       React.useEffect(() => { setPose(homePose); }, [homePose]);
 
-      // 探针：实跑台要能验证「自动的站姿池有几张」，挂在 window 上（与 __srsSfx / __srsSays 同套路）
-      React.useEffect(() => { window.__srsStandPoses = STAND_POSES.slice(); }, []);
-
-      // 自动模式：每 4–8 分钟换一张站姿（抽到的和当前不一样才换）。
-      // 护栏三条：固定姿态时不换；打盹 / 拖拽 / 面板开着时不换；她正在流程姿势（洗牌、摊牌、读牌）
-      // 时也不换 —— 否则会把她从流程里硬拽出来，看着像卡了一下。
+      // 探针：实跑台要能验证「自动的站姿池有几张」与「立绘一共几张」，
+      // 挂在 window 上（与 __srsSfx / __srsSays 同套路）
       React.useEffect(() => {
-        if (posePinned) return undefined;
+        window.__srsStandPoses = STAND_POSES.slice();
+        window.__srsAllPoses = Object.keys(POSES);
+        window.__srsPoseLabel = Object.assign({}, POSE_LABEL);
+      }, []);
+
+      // 自动模式：每 4–8 分钟换一张站姿。
+      //
+      // 2026-11-21 修：原来依赖数组是 [autoPose, posePinned, panelOpen]，
+      // 每次开关面板 / 切固定姿态都会把计时器清掉重新计时，而面板开着期间 tick 又必然被
+      // canRotatePose 拦下 —— 结果是「经常永远等不到一次有效轮换」。
+      // 现在定时器只在挂载时建一次，所有可变状态都通过 ref 读，倒计时不会再被打断。
+      const autoPoseRef = React.useRef(autoPose);
+      autoPoseRef.current = autoPose;
+      const panelOpenRef = React.useRef(panelOpen);
+      panelOpenRef.current = panelOpen;
+      const draggingRef = React.useRef(dragging);
+      draggingRef.current = dragging;
+      // 连续两次 tick 都没回到 home（流程姿势没收尾）就强制回，别让轮换永久卡死
+      const stallRef = React.useRef(0);
+
+      React.useEffect(() => {
         let timer = null;
         const tick = () => {
-          const idleNow = !panelOpen && !dragging && !napRef.current
-            && poseRef.current === cfgPoseRef.current;
-          if (idleNow) {
-            let next = autoPose;
-            // 最多试 8 次，池子 7 张时够跳出重复
-            for (let k = 0; k < 8 && next === autoPose; k += 1) {
-              next = STAND_POSES[Math.floor(Math.random() * STAND_POSES.length)];
+          const st = {
+            pinned: pinnedRef.current,
+            panelOpen: panelOpenRef.current,
+            dragging: draggingRef.current,
+            napping: napRef.current,
+            pose: poseRef.current,
+            home: cfgPoseRef.current,
+          };
+          if (canRotatePose(st)) {
+            stallRef.current = 0;
+            const cur = autoPoseRef.current;
+            const step = drawStandPose(standBagRef.current, cur);
+            standBagRef.current = step.bag;
+            if (step.pose !== cur) {
+              setAutoPose(step.pose);
+              // 探针：面板里可直接看自动换过哪几张、换了多少次
+              window.__srsPoseLog = [step.pose].concat(window.__srsPoseLog || []).slice(0, 20);
             }
-            if (next !== autoPose) setAutoPose(next);
+          } else if (!st.pinned && !st.napping && st.pose !== st.home) {
+            // 只有「卡在非 home 的流程姿势（洗牌/摊牌/抽牌/翻牌）」且没在打盹时才计 stall。
+            // 面板开着 / 拖拽 / 打盹这些预期内的不轮换，不能累加——
+            // 否则打盹期间会被这套机制强行拉醒（打盹有自己的 napRef 唤醒）。
+            stallRef.current += 1;
+            if (stallRef.current >= 2) {
+              stallRef.current = 0;
+              setPose(st.home);
+            }
           }
-          timer = window.setTimeout(tick, 240000 + Math.random() * 240000);
+          window.__srsPoseTicks = (window.__srsPoseTicks || 0) + 1;
+          timer = window.setTimeout(tick, poseIntervalMs());
         };
-        timer = window.setTimeout(tick, 240000 + Math.random() * 240000);
+        timer = window.setTimeout(tick, poseIntervalMs());
         return () => window.clearTimeout(timer);
-      }, [autoPose, posePinned, panelOpen]);
+      }, []);
       const scale = SCALES.indexOf(cfg.scale) >= 0 ? cfg.scale : 1.0;
       const box = HIT_BOX[pose] || HIT_BOX['idle-a'] || { ar: 0.66, box: [0, 0, 1, 1] };
 
@@ -2536,8 +3095,12 @@ window.__ModuleLoader__.load({
       const dozeTimer = React.useRef(null);
       const napTimer = React.useRef(null);
       const napRef = React.useRef(false);          // true = 已经坐着睡着了，别再换姿势吵她
-      // 小动作池：比自动基线更活一点，含发呆
-      const IDLE_POSES = ['think', 'dazed', 'smirk', 'reading', 'smile', 'annoyed'];
+      // 小动作池直接复用自动站姿池（13 张）。
+      // 2026-11-21 修：原来这里只有 6 张（think/dazed/smirk/reading/smile/annoyed），
+      // 而 doze 每 14–19 秒固定 setPose('think')、gesture 每 32–58 秒从这 6 张里挑，
+      // 两者合计占掉约 36% 的画面时间 —— 自动池那 13 张被小动作盖住，
+      // 看上去就是「只在固定的几个之间换」。现在小动作和基线用同一个池子，不存在两套。
+      const IDLE_POSES = STAND_POSES;
       const isLateNight = () => {
         const hour = new Date().getHours();
         return hour >= 23 || hour < 4;
@@ -2550,11 +3113,12 @@ window.__ModuleLoader__.load({
         // 15s：发呆 —— 定在 think 站一会儿再回 idle，这一档不说话
         const doze = () => {
           if (calm() && !pinnedRef.current && poseRef.current === cfgPoseRef.current) {
-            setPose('think');
+            // 原来固定 think：每十几秒就定在同一个姿势上，是「看着只有几张」的主因之一
+            setPose(pickAvoiding(IDLE_POSES, cfgPoseRef.current));
             window.clearTimeout(poseIdleRef.current);
             poseIdleRef.current = window.setTimeout(toIdle, 3200 + Math.random() * 1800);
           }
-          dozeTimer.current = window.setTimeout(doze, 14000 + Math.random() * 5000);
+          dozeTimer.current = window.setTimeout(doze, 40000 + Math.random() * 30000);
         };
 
         // 60s：一句自语；深夜换成关怀句（催睡）
@@ -2570,15 +3134,14 @@ window.__ModuleLoader__.load({
         const gesture = () => {
           // 播报窗口内不抢：她正说着账，这时候转个身、换句话，看起来像没说完就被打断
           if (calm() && Date.now() >= specialUntilRef.current && !pinnedRef.current) {
-            // 原来按 Date.now() % 长度 顺序取，间隔均匀时老是同几张；改成随机，且避开当前基线
-            let pick = IDLE_POSES[Math.floor(Math.random() * IDLE_POSES.length)];
-            if (pick === cfgPoseRef.current) pick = IDLE_POSES[0] === pick ? IDLE_POSES[1] : IDLE_POSES[0];
+            // 从池里随机挑一张，且避开当前基线（避免「换了等于没换」）
+            setPose(pickAvoiding(IDLE_POSES, cfgPoseRef.current));
             setPose(pick);
             if (talkMode !== 'quiet') sayIdle(pickLine(cfg, 'idle'));
             window.clearTimeout(poseIdleRef.current);
             poseIdleRef.current = window.setTimeout(toIdle, 4200 + Math.random() * 2600);
           }
-          gestureTimer.current = window.setTimeout(gesture, talkMode === 'chatty' ? (20000 + Math.random() * 16000) : (32000 + Math.random() * 26000));
+          gestureTimer.current = window.setTimeout(gesture, talkMode === 'chatty' ? (45000 + Math.random() * 30000) : (70000 + Math.random() * 50000));
         };
 
         // 5min：睡着（sleep 姿势保持，等她被点或面板打开再醒）
@@ -2592,8 +3155,8 @@ window.__ModuleLoader__.load({
         };
 
         chatTimer.current = window.setTimeout(chat, (talkMode === 'chatty' ? 6000 : 12000) + Math.random() * 8000);
-        gestureTimer.current = window.setTimeout(gesture, 9000 + Math.random() * 7000);
-        dozeTimer.current = window.setTimeout(doze, 15000 + Math.random() * 4000);
+        gestureTimer.current = window.setTimeout(gesture, 30000 + Math.random() * 20000);
+        dozeTimer.current = window.setTimeout(doze, 20000 + Math.random() * 10000);
         napTimer.current = window.setTimeout(nap, 300000);
         return () => {
           window.clearTimeout(chatTimer.current);
@@ -2737,6 +3300,50 @@ window.__ModuleLoader__.load({
         return () => window.clearInterval(id);
       }, [cfg.remind, playSfx, saySpecial]);
 
+      // W5 月相提醒：只在朔望当天开口，其余日子完全安静；同一天最多一次。
+      // 新月 → 写一件想在一个月内做到的事；满月 → 回头看看这个月封着的。
+      React.useEffect(() => {
+        const rem = cfg.remind || {};
+        if (rem.moon !== true) return undefined;
+        const tick = () => {
+          const now = new Date();
+          const day = localDayKey(now);
+          const st = moonRemindRef.current;
+          if (st && st.d === day) return;                     // 今天说过
+          if (Date.now() < specialUntilRef.current) return;    // 让位给正在播的账目
+          const kind = moonDayKind(now);                       // 朔望判定与许愿瓶同一套口径
+          if (!kind) return;                                   // 不是朔望日：不打扰
+          const rec = { d: day, t: Date.now(), kind: kind };
+          moonRemindRef.current = rec;
+          saveMoonRemind(rec);
+          setMoonHint(kind);                                   // 让许愿瓶那边跟着换引导语
+          setPose('reading');
+          playSfx('bell');
+          if (kind === 'newmoon') {
+            saySpecial('今天是新月。', '新月 · 写一件想在一个月内做到的事？', 12000);
+          } else {
+            const due = wishesRef.current.filter((w) => !w.fate && daysUntil(w.openAt) <= 0);
+            saySpecial('满月了。', due.length
+              ? ('满月 · 有 ' + due.length + ' 件封着的，回头看看？')
+              : '满月 · 这个月封着的，回头看看？', 12000);
+          }
+        };
+        tick();
+        const id = window.setInterval(tick, 30000);
+        return () => window.clearInterval(id);
+      }, [cfg.remind, playSfx, saySpecial]);
+
+      // W5 新月：提醒响过之后切到心情页，把光标放进许愿瓶输入框（少一次点击）。
+      // 只在没有别处在输入时抢焦点。
+      React.useEffect(() => {
+        if (tab !== 'divine' || moonHint !== 'newmoon') return;
+        const el = wishRef.current;
+        if (!el) return;
+        const ae = document.activeElement;
+        if (ae && ae !== document.body && ae.tagName !== 'BUTTON' && ae.tagName !== 'TEXTAREA') return;
+        try { el.focus(); } catch (error) { /* 忽略 */ }
+      }, [tab, moonHint]);
+
       // W4 安神 3 分钟：4 秒吸、2 秒停、6 秒呼，12 秒一圈；走到 0 自己收，姿势回 idle
       React.useEffect(() => {
         if (!breatheOpen) return undefined;
@@ -2760,7 +3367,7 @@ window.__ModuleLoader__.load({
       React.useEffect(() => {
         const amb = cfg.amb || {};
         const want = amb.on === true;
-        const vol = Math.min(1, Math.max(0, ((amb.volume == null ? 45 : amb.volume) / 100) * 0.9));
+        const vol = Math.min(1, Math.max(0, ((amb.volume == null ? DEFAULT_CFG.amb.volume : amb.volume) / 100) * 0.9));
         Object.keys(AMB).forEach((key) => {
           const on = want && ((amb.tracks || {})[key] === true);
           let el = ambRef.current[key];
@@ -2864,6 +3471,36 @@ window.__ModuleLoader__.load({
           saveCfg(next);
           return next;
         });
+      };
+
+      // 发送任意文本到当前会话（解读区「送进对话」用；底部自由输入框已移除）
+      // 反馈走女巫气泡 say()，与已删除的行内提示无关
+      const sendText = async (text) => {
+        const body = String(text || '').trim();
+        if (!body || chatBusy) return;
+        setChatBusy(true);
+        try {
+          const r = await window.fetch('/srs/chat-prompt', {
+            method: 'POST',
+            cache: 'no-store',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({ text: body }),
+          });
+          const d = await r.json().catch(() => ({}));
+          if (r.ok && d && d.ok) {
+            setPose('smile');
+            say('解读已经送进这边的对话了。');
+            playSfx('bell');
+          } else {
+            setPose('annoyed');
+            say((d && d.error) || '没送出去，等一下再试。');
+          }
+        } catch (error) {
+          setPose('annoyed');
+          say('连不上宿主，没送出去。');
+        } finally {
+          setChatBusy(false);
+        }
       };
 
       // 拖拽
@@ -2980,12 +3617,27 @@ window.__ModuleLoader__.load({
 
       const doDraw = async (modeArg) => {
         if (busyRef.current) return;
-        busyRef.current = true;
         const pick = modeArg || cfg.spread;
-        const mode = (pick === 'three' || pick === 'daily' || pick === 'celtic') ? pick : 'one';
-        const want = mode === 'celtic' ? 10 : (mode === 'three' ? 3 : 1);
+        // 六档牌阵：one / three / five / relation / celtic / either；daily 是单张的当日锁形态
+        const isDaily = pick === 'daily';
+        const mode = isDaily ? 'one' : (SPREAD_WANT[pick] ? pick : 'one');
+        const want = SPREAD_WANT[mode] || 1;
+
+        // 多张牌阵必须先写「所问」：空着就拦下，不进入洗牌
+        // （参考「窥探天机」的写法：提交前校验 + 明确提示，不静默补默认值）
+        const qErr = questionError(pick, question);
+        if (qErr) {
+          setQErr(qErr);
+          const el = qInputRef.current;
+          if (el) { try { el.focus(); } catch (error) { /* 忽略 */ } }
+          return;
+        }
+        setQErr('');
+
+        busyRef.current = true;
         // 每日一牌：单张当天已锁 → 直接把她那天抽到的那张摆回来，不再重抽
-        if (mode === 'daily' && dailyCard && dailyCard.d === localDayKey()) {
+        // （每日一牌与每日一签已合并成同一个「每日」入口，锁的是同一张 srs.daily.v1）
+        if (isDaily && dailyCard && dailyCard.d === localDayKey()) {
           const locked = (DECK.cards || []).find((c) => c.id === dailyCard.id);
           if (locked) {
             const meaning = meaningOf(locked, DECK, TAROT, !!dailyCard.reversed);
@@ -3028,7 +3680,7 @@ window.__ModuleLoader__.load({
         playSfx('draw');
         // 摊牌后停下等她点一张（T5「点一张」），点击再落位
         const seed = newSeed();
-        pickRef.current = { seed: seed, mode: mode, want: want };
+        pickRef.current = { seed: seed, mode: mode, want: want, pick: pick };
         setPhase('pick');
         busyRef.current = false;
         return;
@@ -3043,6 +3695,7 @@ window.__ModuleLoader__.load({
         busyRef.current = true;
         const mode = info.mode;
         const want = info.want;
+        const isDaily = info.pick === 'daily';
         const multi = want > 1;
         const used = pickedRef.current || [];
         // 同一格不能点两次（多张模式下格子已标已选，这里再兜一层）
@@ -3112,7 +3765,7 @@ window.__ModuleLoader__.load({
         setPose('smile');
         playSfx('bell');
         say(pickLine(cfg, 'done'));
-        if (mode === 'daily') {
+        if (isDaily) {
           const rec = {
             d: localDayKey(),
             id: finalPicks[0].card.id,
@@ -3170,16 +3823,19 @@ window.__ModuleLoader__.load({
         busyRef.current = false;
       };
 
-      // T9 同种子重放：历史里存了 seed，按同一副顺序把当时那几张重摆一遍（逆位也一并复现）
-      const replayEntry = async (entry) => {
+      // T9 同种子重放：按同一副顺序把当时那几张重摆一遍（逆位也一并复现）
+      // explicitIds：直接给牌 id（解读块「重放」用），不依赖历史里还留着记录
+      const replayEntry = async (entry, explicitIds) => {
         if (busyRef.current || !entry || entry.seed == null) return;
         let all = [];
         try { all = JSON.parse(window.localStorage.getItem(HIST_KEY) || '[]'); } catch (error) { all = []; }
-        // 历史是 unshift 进来的（新的在前），同一颗种子的三条正好是倒序，reverse 回去就是当年的落位顺序
+        // 历史是 unshift 进来的（新的在前），同一颗种子的几条正好是倒序，reverse 回去就是当年的落位顺序
         const same = all.filter((x) => x.seed === entry.seed && x.spread === entry.spread).slice().reverse();
-        const mode = entry.spread === 'three' ? 'three' : (entry.spread === 'celtic' ? 'celtic' : 'one');
-        const want = mode === 'celtic' ? 10 : (mode === 'three' ? 3 : 1);
-        const list = (mode === 'one' || mode === 'daily' ? [entry] : same).filter(Boolean);
+        // 牌阵一律按 SPREAD_WANT 判定：早先只认 three/celtic，5 张与 7 张会被当成单张重放
+        const mode = SPREAD_WANT[entry.spread] ? entry.spread : (entry.spread === 'daily' ? 'one' : 'one');
+        const want = SPREAD_WANT[mode] || 1;
+        const ids = (explicitIds && explicitIds.length ? explicitIds : same.map((x) => x.id)).filter(Boolean);
+        if (!ids.length) { setPose('annoyed'); say('这一局的记录不在了，重放不了。'); return; }
         setHistOpen(false);
         setTab('tarot');
         setAndSave({ spread: mode });
@@ -3208,14 +3864,14 @@ window.__ModuleLoader__.load({
         };
         pickRef.current = { seed: entry.seed >>> 0, mode: mode, want: want };
         setPose('spread');
-        for (let i = 0; i < list.length; i += 1) {
+        for (let i = 0; i < ids.length; i += 1) {
           const info = pickRef.current;
           if (!info) break;
-          await finishPick(idxOf(list[i].id));
+          await finishPick(idxOf(ids[i]));
           await wait(90);
         }
-        if (mode === 'three') await revealPicks();
-        if (mode === 'celtic') await revealPicks();
+        // 多张牌阵挑满后统一翻开
+        if (want > 1) await revealPicks();
         busyRef.current = false;
       };
 
@@ -3349,40 +4005,18 @@ window.__ModuleLoader__.load({
           const act = t.getAttribute('data-act');
           if (act === 'draw') handlersRef.current.draw(cfg.spread);
           else if (act === 'close') handlersRef.current.close();
-          else if (act.indexOf('divine-') === 0 && act !== 'divine-draw') {
-            setDivineMode(act.slice(7));
-            setDivineCards([]);
-          }
           else if (act === 'divine-draw') {
-            doDivine(divineMode);
+            handlersRef.current.moodAgain();
+          }
+          else if (act === 'bill-more') { setBillLimit((n) => n + 20); }
+          else if (act === 'toggle-remind-moon') {
+            patchCfg((prev) => Object.assign({}, prev, {
+              remind: Object.assign({}, prev.remind, { moon: !(prev.remind && prev.remind.moon === true) }),
+            }));
           }
           else if (act.indexOf('mood-') === 0) {
-            const id = act.slice(5);
-            const day = localDayKey();
-            // 每个心情各自记当天点了几次：第 1 次用日种子（今天的心情牌可回看），第 2 次起每次重抽
-            const rec = { d: day, mood: id, picks: {} };
-            try {
-              const prev = JSON.parse(window.localStorage.getItem(MOOD_KEY) || 'null');
-              if (prev && prev.d === day && prev.picks && typeof prev.picks === 'object') rec.picks = prev.picks;
-            } catch (error) { /* 忽略：读不出来就当今天第一次 */ }
-            rec.picks[id] = (Number(rec.picks[id]) || 0) + 1;
-            try { window.localStorage.setItem(MOOD_KEY, JSON.stringify(rec)); } catch (error) { /* 忽略 */ }
-            setMood(rec);
-            // 第 1 次：同一天同一心情稳定同一张（可回看）；第 2 次起：掺时间戳重抽，每次都不一样
-            const nth = rec.picks[id];
-            const seed = nth === 1
-              ? strHash('mood|' + id + '|' + day)
-              : ((strHash('mood|' + id + '|' + day + '|' + nth) ^ (Date.now() & 0xffffffff)) >>> 0);
-            const rnd = prng(seed);
-            const cards = (DECK && DECK.cards) || [];
-            if (cards.length) {
-              const card = cards[Math.floor(rnd() * cards.length)];
-              const reversed = cfg.reversed ? rnd() < 0.5 : false;
-              setMoodPick({ card: card, reversed: reversed, empathy: empathyOf(card.id) });
-              setPose('smile');
-              playSfx('bell');
-              say('不用解释，我大概知道。');
-            }
+            // 抽牌逻辑统一在 drawMood（与「再抽一张」同一份）
+            handlersRef.current.drawMood(act.slice(5));
           }
           // 抽牌的「点第 N 张」：必须锚住纯数字，否则会把 pick-sign-* 一起吃掉
           // （`'pick-sign-capricorn'.indexOf('pick-') === 0`，所以以前点星座一路走到
@@ -3455,6 +4089,7 @@ window.__ModuleLoader__.load({
             setWishes(list);
             saveWishes(list);
             if (wishRef.current) wishRef.current.value = '';
+            setMoonHint(null);   // 起过头了，新月的引导语就收起来
             const d = daysUntil(openAt);
             setPose('smile');
             playSfx('bell');
@@ -3478,6 +4113,36 @@ window.__ModuleLoader__.load({
             const list = wishesRef.current.filter((w) => String(w.id) !== id);
             setWishes(list);
             saveWishes(list);
+          }
+          // W5 满月回看：开到期的愿望后给两个去向。
+          // 「放下」是软归档——内容折叠、可恢复，不是真删（对应传统里"写下来再撕掉"那一步）
+          else if (act.indexOf('wish-keep-') === 0 || act.indexOf('wish-release-') === 0) {
+            const isRelease = act.indexOf('wish-release-') === 0;
+            const id = act.slice(isRelease ? 13 : 10);
+            const one = wishesRef.current.find((w) => String(w.id) === id);
+            if (!one || !one.openedAt) return;
+            const list = wishesRef.current.map((w) => (String(w.id) === id
+              ? Object.assign({}, w, { fate: isRelease ? 'released' : 'kept', reviewedAt: isoDay() })
+              : w));
+            setWishes(list);
+            saveWishes(list);
+            setPose(isRelease ? 'smile' : 'reading');
+            playSfx('bell');
+            say(isRelease ? '放下了。它还在，只是不再压着。' : '收下了。那就留着。');
+            // 这一批都回看完了，给一句收尾
+            const left = list.filter((w) => w.openedAt && !w.fate).length;
+            if (!left) {
+              window.setTimeout(() => say('这一轮看完了。下一个新月再起头。'), 2600);
+              setMoonHint(null);
+            }
+          }
+          else if (act.indexOf('wish-restore-') === 0) {
+            const id = act.slice(13);
+            const list = wishesRef.current.map((w) => (String(w.id) === id
+              ? Object.assign({}, w, { fate: null, reviewedAt: null }) : w));
+            setWishes(list);
+            saveWishes(list);
+            say('拿回来了。');
           }
           // 人物姿态：固定某一张 / 回到自动
           else if (act === 'pose-auto') {
@@ -3504,31 +4169,11 @@ window.__ModuleLoader__.load({
             } catch (error) { /* 忽略 */ }
             setHistVer((v) => v + 1);
           }
-          else if (act === 'export-card' || act === 'export-card-34') {
-            if (!result || exporting) return;
-            setExporting(true);
-            const isWide = act === 'export-card-34';
-            renderResultCard({
-              cardSrc: '/srs/cards/big/' + result.card.id + '.webp?v=' + VERSION,
-              name: result.card.name_zh,
-              numeral: result.card.numeral,
-              orientation: result.reversed ? '逆位' : '正位',
-              lines: (result.meaning && result.meaning.lines) || [],
-              keywords: (result.meaning && result.meaning.keywords) || [],
-              date: localDayKey(),
-              ratio: isWide ? '34' : '916',
-            }).then((canvas) => {
-              // toBlob 在大画布上偶发不回调（实测 1080×1920 无响应），改用 toDataURL 一步到位
-              const dataUrl = canvas.toDataURL('image/png');
-              downloadDataUrl(dataUrl, 'sorceress-' + localDayKey() + '-' + result.card.id + (isWide ? '-34' : '') + '.png');
-              say('图存好了');
-            }).catch(() => {
-              say('存图失败，可能浏览器拦了');
-            }).then(() => setExporting(false));
-          }
           else if (act === 'export-horo') {
             if (exporting) return;
-            const horo = todayCard(signFromBirthday(profile.birthday) || 'aries', HORO, new Date());
+            // 用页面当前正在看的星座（手动选择 > 档案生日 > 今天太阳座），
+            // 不再写死「生日座或白羊」，否则导出的牌和屏幕上的不是同一个星座。
+            const horo = todayCard(signRef.current || 'aries', HORO, new Date());
             if (!horo) { say('运势还没读到'); return; }
             setExporting(true);
             renderHoroCard({
@@ -3539,7 +4184,8 @@ window.__ModuleLoader__.load({
               element: horo.sign.element,
               ruler: horo.sign.ruler,
               mood: horo.mood,
-              domains: horo.domains.map((d) => ({ label: d.label, stars: '★★★★★'.slice(0, d.stars) + '☆☆☆☆☆'.slice(0, 5 - d.stars), text: d.text })),
+              // 星级按「实心数」传，由绘制端分别上色；不再传整串 ★☆
+              domains: horo.domains.map((d) => ({ label: d.label, stars: d.stars, text: d.text })),
               doIt: horo.doIt,
               avoid: horo.avoid,
               color: horo.color,
@@ -3567,6 +4213,14 @@ window.__ModuleLoader__.load({
           else if (act === 'toggle-bubble') patchCfg((prev) => Object.assign({}, prev, {
             bubble: Object.assign({}, prev.bubble, { on: !((prev.bubble || {}).on !== false) }),
           }));
+          // D 层（0.57.0）三个联动开关：读改写一律 patchCfg（铁律 14）
+          else if (act === 'toggle-react-mood' || act === 'toggle-react-tool') {
+            const key = act === 'toggle-react-mood' ? 'mood' : 'tool';
+            patchCfg((prev) => Object.assign({}, prev, {
+              react: Object.assign({}, prev.react, { [key]: !(((prev.react || {})[key]) !== false) }),
+            }));
+          }
+
           else if (act.indexOf('notice-') === 0) {
             // 三个播报开关：默认都是开，关掉写 false（缺键当开，老配置不用迁移）
             const key = { 'notice-turn': 'turnCost', 'notice-ask': 'askWait', 'notice-approve': 'approveWait' }[act];
@@ -3836,7 +4490,28 @@ window.__ModuleLoader__.load({
           else if (act === 'spread-daily') { setAndSave({ spread: 'daily' }); setResults([]); setPhase('idle'); setResult(null); }
           else if (act === 'spread-one') { setAndSave({ spread: 'one' }); setResults([]); setPhase('idle'); setResult(null); }
           else if (act === 'spread-three') { setAndSave({ spread: 'three' }); setResults([]); setPicked([]); pickedRef.current = []; setPhase('idle'); setResult(null); }
+          else if (act === 'spread-five') { setAndSave({ spread: 'five' }); setResults([]); setPicked([]); pickedRef.current = []; setPhase('idle'); setResult(null); }
+          else if (act === 'spread-relation') { setAndSave({ spread: 'relation' }); setResults([]); setPicked([]); pickedRef.current = []; setPhase('idle'); setResult(null); }
+          else if (act === 'spread-either') { setAndSave({ spread: 'either' }); setResults([]); setPicked([]); pickedRef.current = []; setPhase('idle'); setResult(null); }
           else if (act === 'spread-celtic') { setAndSave({ spread: 'celtic' }); setResults([]); setPicked([]); pickedRef.current = []; setPhase('idle'); setResult(null); }
+          else if (act.indexOf('direction-') === 0) {
+            const dir = act.slice(10);
+            if (DIRECTION_LABEL[dir]) setAndSave({ direction: dir });
+          }
+          else if (act === 'reading-toggle') { setReadingOpen((v) => !v); }
+          else if (act === 'reading-replay') {
+            // 把当前这一局原样再摆一次：直接把这几张牌的 id 交给重放，不依赖历史记录
+            const picks = (results && results.length) ? results : (result ? [result] : []);
+            const ids = picks.map((p) => (p && p.card && p.card.id) || null).filter(Boolean);
+            const seed = (result && result.seed) || null;
+            if (seed && ids.length) replayEntry({ seed: seed, spread: cfg.spread }, ids);
+            else { setPose('annoyed'); say('这一局还没抽完，先抽完再重放。'); }
+          }
+          else if (act === 'reading-send') {
+            const picks = (results && results.length) ? results : (result ? [result] : []);
+            const mode = cfg.spread === 'daily' ? 'one' : (SPREAD_WANT[cfg.spread] ? cfg.spread : (picks.length > 1 ? 'three' : 'one'));
+            if (picks.length) sendText(readingFullText(picks, mode, question, cfg.direction, result && result.seed));
+          }
           else if (act === 'refresh-billing') { loadBilling(true); loadUsage(usageRange); }
           else if (act.indexOf('usage-range-') === 0) {
             const r = act.slice(12);
@@ -3856,7 +4531,7 @@ window.__ModuleLoader__.load({
           el.removeEventListener('mouseup', swallow, true);
           el.removeEventListener('click', onClick, true);
         };
-      }, [panelOpen, cfg.spread, cfg.bubble, cfg.sound, cfg.detail, divineMode, daily, divineCards, bubbleEdit, cfg.lines, result, reviewOpen, renameKey]);
+      }, [panelOpen, cfg.spread, cfg.bubble, cfg.sound, cfg.detail, daily, bubbleEdit, cfg.lines, result, reviewOpen, renameKey]);
       // 账目播报用的两个小工具：小额给足 4 位小数（¥0.0034 印成 ¥0.00 会被当成免费）
       const moneyTiny = (n) => {
         const v = Number(n) || 0;
@@ -3973,13 +4648,37 @@ window.__ModuleLoader__.load({
                   playSfx(isAsk ? 'ask' : 'approve');
                 }
               }
+              // D3 会话联动：开工/收工/报错 → 换姿势 + 冒一句（同 ts 只反应一次，可在配置里关）
+              const mood = d.mood || null;
+              if (mood && mood.ts && mood.ts !== moodSeenRef.current && (cfg.react || {}).mood !== false) {
+                moodSeenRef.current = mood.ts;
+                if (mood.kind === 'working') {
+                  setPose('think');
+                  sayIdle('你忙，我在边上看着。');
+                } else if (mood.kind === 'done') {
+                  setPose('smile');
+                  sayIdle('这一段收完了，喘口气。');
+                } else if (mood.kind === 'error') {
+                  setPose('annoyed');
+                  sayIdle('刚刚绊了一下，再试一次看看。');
+                }
+              }
+              // D5 女巫工具留痕：agent 调了 sorceress_* → 她翻牌/笑一下（同 seq 一次，可关）
+              const st = d.srsTool || null;
+              if (st && st.seq && st.seq !== srsToolSeenRef.current && (cfg.react || {}).tool !== false) {
+                srsToolSeenRef.current = st.seq;
+                if (st.name === 'sorceress_horoscope') setPose('look-aside');
+                else setPose('flip');
+                playSfx('flip');
+                sayIdle(st.ok ? '牌我替你看过了。' : '这一把没抽成，再来一次。');
+              }
             })
             .catch(() => {});
         };
         load();
         const id = window.setInterval(load, 3000);
         return () => { cancelled = true; window.clearInterval(id); };
-      }, [cfg.notice, cfg.bubble, saySpecial, playSfx]);
+      }, [cfg.notice, cfg.bubble, cfg.react, saySpecial, sayIdle, playSfx]);
 
       // 面板唯一入口：右上角水晶球。点人物只搭话，不进菜单（0.25.1 定的交互）
       const openPanel = React.useCallback(() => {
@@ -4081,15 +4780,13 @@ window.__ModuleLoader__.load({
       // 面板一打开就拉一次账本（水晶球入口在面板之外，走不到面板监听里的 open-menu）
       React.useEffect(() => {
         if (!panelOpen) return;
-        // 每次打开菜单都回到第一项：塔罗=每日、占卜=每日一签（不记上次选的牌阵/占卜法）
+        // 每次打开菜单都回到第一项：塔罗=每日、情绪=情绪打卡（不记上次选的牌阵/占法）
         setAndSave({ spread: 'daily' });
         setResults([]);
         setPicked([]);
         pickedRef.current = [];
         setPhase('idle');
         setResult(null);
-        setDivineMode('daily');
-        setDivineCards([]);
         // 子页与一次性状态一并归位：上次停在历史/牌库/回顾或正在安神，重开不该接着挂在那儿
         setHistOpen(false);
         setDeckOpen(false);
@@ -4296,7 +4993,7 @@ window.__ModuleLoader__.load({
       const ioRef = React.useRef(null);          // 设置导入框
       const cfgExportRef = React.useRef(null);   // 导出框（只读展示）
 
-      const TABS = [['tarot', '塔罗'], ['divine', '占卜'], ['zodiac', '星座'], ['bill', '计费'], ['sound', '配置'], ['profile', '档案']];
+      const TABS = [['tarot', '塔罗'], ['divine', '心情'], ['zodiac', '星座'], ['bill', '计费'], ['sound', '配置'], ['profile', '档案']];
       const money = (n) => (typeof n === 'number' ? '¥' + n.toFixed(2) : '—');
       const cycle = priv ? cycleInfo(priv.periods, priv.avgLen) : null;
       const bc = birthCard(profile.birthday);
@@ -4324,12 +5021,13 @@ window.__ModuleLoader__.load({
           ['path', { d: 'M8.9 5.6l9.2 2.5a1.7 1.7 0 0 1 1.2 2.1l-2.3 8.3a1.7 1.7 0 0 1-2.1 1.2l-9.2-2.5a1.7 1.7 0 0 1-1.2-2.1L6.8 6.8a1.7 1.7 0 0 1 2.1-1.2z', fill: C.ink, stroke: C.gold, strokeWidth: 1.3 }],
           ['path', { d: 'M11.9 9.3l.85 2.35 2.35.85-2.35.85-.85 2.35-.85-2.35-2.35-.85 2.35-.85z', fill: C.lit, stroke: 'none' }],
         ],
-        // 占卜：玻璃球（半透蓝）+ 金月牙 + 球面高光 + 底座弧
+        // 心情：暖金心形（描金 + 半透填充 + 一点高光），与「今天心情怎么样」的心形同源
         divine: [
-          ['circle', { cx: 12, cy: 10, r: 5.9, fill: '#BFD2EA', fillOpacity: 0.3, stroke: C.gold, strokeWidth: 1.3 }],
-          ['path', { d: 'M13.5 7.4a2.7 2.7 0 1 0 .1 5.1 3.35 3.35 0 1 1-.1-5.1z', fill: C.lit, stroke: 'none' }],
-          ['path', { d: 'M8.1 7.9a4.3 4.3 0 0 1 2.2-1.4', stroke: '#EAF2FF', strokeWidth: 1.1, opacity: 0.55 }],
-          ['path', { d: 'M7.4 16.6c1.2 1.1 2.8 1.7 4.6 1.7s3.4-.6 4.6-1.7', stroke: C.gold, strokeWidth: 1.4 }],
+          ['path', {
+            d: 'M12 20.2S4.4 15.4 4.4 10.5A4.05 4.05 0 0 1 12 8.2a4.05 4.05 0 0 1 7.6 2.3c0 4.9-7.6 9.7-7.6 9.7z',
+            fill: C.lit, fillOpacity: 0.26, stroke: C.gold, strokeWidth: 1.4,
+          }],
+          ['path', { d: 'M8.3 10.3a2.1 2.1 0 0 1 1.5-1.6', stroke: '#FFF3DA', strokeWidth: 1.1, opacity: 0.6 }],
         ],
         // 星座：三颗实心星（顶上一颗最亮最大）+ 淡金连线
         zodiac: [
@@ -4550,130 +5248,138 @@ window.__ModuleLoader__.load({
           tabWash))));
 
       // ── 塔罗页 ──────────────────────────────────────────────────
-      const SPREAD_LABEL = ['过去', '现在', '未来'];
-      // 凯尔特十字十位（T11）：按传统位序，第 9 位是「期待与恐惧」
-      const CELTIC_LABEL = ['现状', '阻碍', '根基', '过去', '目标', '未来', '自己', '环境', '期待与恐惧', '结果'];
-      // ── 占卜：抽 N 张（占卜页用，与塔罗页互不影响）─────────────
-      const drawN = (n) => {
-        const cards = (DECK && DECK.cards) || [];
-        const seed = newSeed();
-        const rnd = prng(seed);
-        const order = cards.map((c, i) => i);
-        for (let i = order.length - 1; i > 0; i -= 1) {
-          const j = Math.floor(rnd() * (i + 1));
-          const tmp = order[i];
-          order[i] = order[j];
-          order[j] = tmp;
-        }
-        const out = [];
-        for (let k = 0; k < n; k += 1) {
-          const card = cards[order[k]];
-          const reversed = cfg.reversed ? rnd() < 0.5 : false;
-          out.push({ card, reversed, meaning: meaningOf(card, DECK, TAROT, reversed) });
-        }
-        return { seed, picks: out };
-      };
+      // 牌阵位置表已提到 factory 层（抽牌与富解读共用），这里不再重复声明
 
       const todayKey = () => {
         const d = new Date();
         return d.getFullYear() + '-' + (d.getMonth() + 1) + '-' + d.getDate();
       };
 
-      const doDivine = async (mode) => {
-        if (divineBusy) return;
-        if (mode === 'daily' && daily && daily.d === todayKey()) return;   // 每日一签当天锁定
-        setDivineBusy(true);
+      // 心情页：抽一张「陪心情」的牌。
+      // 点心情标签与「再抽一张」走同一个函数，保证重抽真的换掉屏幕上那张
+      // （旧版按钮写的是另一套状态，界面读不到，点了看起来没反应）。
+      const drawMood = async (id) => {
+        const moodId = String(id || '');
+        if (!moodId || moodBusyRef.current) return;   // 同步防连点：动画期间再点无效
+        const day = localDayKey();
+        // 每个心情各自记当天点了几次：第 1 次用日种子（今天的心情牌可回看），第 2 次起每次重抽
+        const rec = { d: day, mood: moodId, picks: {} };
+        try {
+          const prev = JSON.parse(window.localStorage.getItem(MOOD_KEY) || 'null');
+          if (prev && prev.d === day && prev.picks && typeof prev.picks === 'object') rec.picks = prev.picks;
+        } catch (error) { /* 忽略：读不出来就当今天第一次 */ }
+        rec.picks[moodId] = (Number(rec.picks[moodId]) || 0) + 1;
+        try { window.localStorage.setItem(MOOD_KEY, JSON.stringify(rec)); } catch (error) { /* 忽略 */ }
+        setMood(rec);
+
+        // 牌在点击瞬间就算定（种子逻辑一字未改），动画只负责「什么时候露出来」
+        const nth = rec.picks[moodId];
+        const seed = nth === 1
+          ? strHash('mood|' + moodId + '|' + day)
+          : ((strHash('mood|' + moodId + '|' + day + '|' + nth) ^ (Date.now() & 0xffffffff)) >>> 0);
+        const rnd = prng(seed);
+        const cards = (DECK && DECK.cards) || [];
+        if (!cards.length) { setPose('annoyed'); say('牌库还没读到。'); return; }
+        const card = cards[Math.floor(rnd() * cards.length)];
+        const reversed = cfg.reversed ? rnd() < 0.5 : false;
+        const pick = { card: card, reversed: reversed, empathy: empathyOf(card.id) };
+
+        // ① 洗牌 450ms：上一张先撤掉，牌背在抖
+        moodBusyRef.current = true;
+        setMoodBusy(true);
+        setMoodPick(null);
+        setMoodShuffling(true);
         setPose('shuffle');
         playSfx('shuffle');
-        await wait(620);
-        setPose('draw');
-        playSfx('draw');
-        const n = mode === 'duo' ? 2 : (mode === 'either' ? 5 : (mode === 'relation' ? 7 : 1));
-        const { picks } = drawN(n);
+        await wait(450);
+
+        // ② 翻牌 380ms：换 key 强制重挂载，CSS 翻转动画才会重播
+        setMoodShuffling(false);
+        setMoodSeq((s) => s + 1);
+        setMoodPick(pick);
         setPose('flip');
         playSfx('flip');
-        await wait(420);
-        setDivineSeq((s) => s + 1);
-        setDivineCards(picks);
-        if (mode === 'daily') {
-          const p0 = picks[0];
-          const colors = (HORO.lucky || {}).colors || [];
-          const rec = {
-            d: todayKey(),
-            id: p0.card.id,
-            name: p0.card.name_zh,
-            reversed: p0.reversed,
-            line: (p0.meaning.lines || [])[0] || '',
-            color: colors.length ? colors[strHash(p0.card.id) % colors.length] : null,
-          };
-          setDaily(rec);
-          try { window.localStorage.setItem('srs.daily.v1', JSON.stringify(rec)); } catch (error) { /* 忽略 */ }
-        }
+        await wait(380);
+
+        // ③ 收尾
         setPose('smile');
         playSfx('bell');
-        setDivineBusy(false);
+        say('不用解释，我大概知道。');
+        setMoodBusy(false);
+        moodBusyRef.current = false;
+      };
+      // 事件监听器在较早的 render 里注册，经 handlersRef 取最新函数，避免闭包拿旧值
+      handlersRef.current.drawMood = drawMood;
+      handlersRef.current.moodAgain = () => {
+        const id = (mood && mood.mood) || null;
+        if (!id) { setPose('annoyed'); say('先在上面选一个心情。'); return; }
+        drawMood(id);
       };
 
-      // 二选一：A路 / 关键 / A结局 / B路 / B结局 → 简易评分
-      const eitherScore = (picks) => {
-        if (picks.length < 5) return null;
-        const s = (x) => (x.reversed ? 1 : 2);
-        const a = s(picks[0]) + s(picks[2]) + s(picks[1]);
-        const b = s(picks[3]) + s(picks[4]) + s(picks[1]);
-        return { a, b, win: a === b ? 'both' : (a > b ? 'A' : 'B') };
+      // 牌阵选择：每日 + 6 档，按「用途」命名，5 张分「局势 / 二选一」两种问法
+      const SPREAD_CHOICES = [
+        ['daily', '每日一牌', '每日一牌（当天锁定，次日自动换）'],
+        ['one', '单张指引', '单张指引 · 1 张'],
+        ['three', '过去未来', '过去现在未来 · 3 张'],
+        ['five', '五张局势', '五张局势 · 5 张'],
+        ['relation', '关系阵', '关系阵 · 7 张'],
+        ['celtic', '凯尔特', '凯尔特十字 · 10 张'],
+        ['either', '二选一', '二选一 · 5 张'],
+      ];
+      const curSpread = cfg.spread || 'daily';
+      // 三段式：标签一行 + 控件整行等宽网格（4 列；7 项自然排成 4+3，不再参差）
+      const formLab = (icon, text) => h('div', { className: 'srs-form-lab' }, capIcon(icon), h('span', null, text));
+      const spreadSeg = h('div', { className: 'srs-form' },
+        formLab('grid', '牌阵'),
+        h('div', { className: 'srs-form-grid' },
+          SPREAD_CHOICES.map(([key, label, tip]) => h('button', {
+            key: 'sp-' + key,
+            'data-act': 'spread-' + key,
+            title: tip,
+            className: curSpread === key ? 'on' : '',
+          }, label))));
+
+      // 询问方向：只影响解读侧重，不改变抽到的牌（与宿主 direction 枚举逐字一致）
+      const DIRECTION_CHOICES = [
+        ['general', '综合'], ['wealth', '财运'], ['career', '事业'],
+        ['love', '感情'], ['health', '健康'], ['study', '学业'], ['travel', '出行'],
+      ];
+      const curDir = cfg.direction || 'general';
+      const dirSeg = h('div', { className: 'srs-form' },
+        formLab('star', '方向'),
+        h('div', { className: 'srs-form-grid' },
+          DIRECTION_CHOICES.map(([key, label]) => h('button', {
+            key: 'dir-' + key,
+            'data-act': 'direction-' + key,
+            className: curDir === key ? 'on' : '',
+          }, label))));
+
+      // ── 通用多张视图：3/5/7/10 张都走它，位置名取该牌阵的 SPREAD_POS ──
+      // 只负责展示；抽牌与正逆位早在 finishPick 里定好，这里不碰随机。
+      const multiView = (mode) => {
+        const pos = SPREAD_POS[mode] || [];
+        const n = results.length;
+        if (!n || n !== (SPREAD_WANT[mode] || 0)) return null;
+        return h('div', null,
+          h('div', { className: 'srs-spread srs-spread-wrap' + (n >= 7 ? ' srs-celtic' : '') },
+            results.map((r, i) => h('div', { key: 'mv' + i, className: 'srs-sp-cell' },
+              h('img', {
+                className: 'srs-sp-img',
+                src: '/srs/cards/thumb/' + r.card.id + '.webp?v=' + VERSION,
+                alt: '',
+                draggable: false,
+                style: r.reversed ? { transform: 'rotate(180deg)' } : null,
+              }),
+              h('div', { className: 'srs-sp-lab' }, n >= 7 ? String(i + 1) : (pos[i] || '')),
+              h('div', { className: 'srs-sp-name' }, r.card.name_zh + (r.reversed ? '·逆' : '·正'))))),
+          h('div', { className: 'srs-lines', style: { marginTop: '10px', paddingBottom: '4px' } },
+            results.map((r, i) => h('p', { key: 'mt' + i },
+              h('b', { style: { color: '#E7D9BC' } }, (pos[i] || ('第' + (i + 1) + '张')) + '：'),
+              readAt(pos[i] || '', mode, r))),
+            h('p', null, h('b', { style: { color: '#E7D9BC' } }, '合起来看：'), combineSpread(results, mode)))
+        );
       };
-
-      const spreadSeg = h('div', { className: 'srs-menu-row' },
-        h('span', { className: 'srs-row-cap' }, capIcon('grid'), h('span', null, '牌阵')),
-        h('div', { className: 'srs-seg' },
-          h('button', { 'data-act': 'spread-daily', className: cfg.spread === 'daily' ? 'on' : '' }, '每日'),
-          h('button', { 'data-act': 'spread-one', className: (cfg.spread !== 'three' && cfg.spread !== 'daily' && cfg.spread !== 'celtic') ? 'on' : '' }, '单张'),
-          h('button', { 'data-act': 'spread-three', className: cfg.spread === 'three' ? 'on' : '' }, '三张'),
-          h('button', { 'data-act': 'spread-celtic', className: cfg.spread === 'celtic' ? 'on' : '', title: '凯尔特十字 · 十张' }, '十张')));
-
-      const threeView = results.length === 3 ? h('div', null,
-        h('div', { className: 'srs-spread' },
-          results.map((r, i) => h('div', { key: 'sp' + i, className: 'srs-sp-cell' },
-            h('img', {
-              className: 'srs-sp-img',
-              src: '/srs/cards/thumb/' + r.card.id + '.webp?v=' + VERSION,
-              alt: '',
-              draggable: false,
-              style: r.reversed ? { transform: 'rotate(180deg)' } : null,
-            }),
-            h('div', { className: 'srs-sp-lab' }, SPREAD_LABEL[i]),
-            h('div', { className: 'srs-sp-name' }, r.card.name_zh + (r.reversed ? '·逆' : '·正'))
-          ))
-        ),
-        h('div', { className: 'srs-lines', style: { marginTop: '10px', paddingBottom: '4px' } },
-          results.map((r, i) => h('p', { key: 'st' + i },
-            h('b', { style: { color: '#E7D9BC' } }, SPREAD_LABEL[i] + '：'),
-            readAt(SPREAD_LABEL[i], 'three', r))),
-          h('p', null, h('b', { style: { color: '#E7D9BC' } }, '合起来看：'), combineSpread(results, 'three'))
-        )
-      ) : null;
-
-      // ── 凯尔特十字（T11 · 十张）──────────────────────────────────
-      const celticView = results.length === 10 ? h('div', null,
-        h('div', { className: 'srs-note srs-note-s' },
-          '凯尔特十字：1 现状 · 2 阻碍 · 3 根基 · 4 过去 · 5 目标 · 6 未来 · 7 自己 · 8 环境 · 9 期待与恐惧 · 10 结果'),
-        h('div', { className: 'srs-spread srs-spread-wrap srs-celtic' },
-          results.map((r, i) => h('div', { key: 'cl' + i, className: 'srs-sp-cell' },
-            h('img', {
-              className: 'srs-sp-img',
-              src: '/srs/cards/thumb/' + r.card.id + '.webp?v=' + VERSION,
-              alt: '',
-              draggable: false,
-              style: r.reversed ? { transform: 'rotate(180deg)' } : null,
-            }),
-            h('div', { className: 'srs-sp-lab' }, String(i + 1)),
-            h('div', { className: 'srs-sp-name' }, r.card.name_zh + (r.reversed ? '·逆' : '·正'))))),
-        h('div', { className: 'srs-lines', style: { marginTop: '10px', paddingBottom: '4px' } },
-          results.map((r, i) => h('p', { key: 'cx' + i },
-            h('b', { style: { color: '#E7D9BC' } }, CELTIC_LABEL[i] + '：'),
-            readAt(CELTIC_LABEL[i], 'celtic', r))),
-          h('p', null, h('b', { style: { color: '#E7D9BC' } }, '合起来看：'), combineSpread(results, 'celtic')))
-      ) : null;
+      // 多张视图由 multiView(mode) 按需渲染，不再预生成 threeView/celticView
 
       // ── 历史子页 ───────────────────────────────────────────────
       const lockedToday = !!(dailyCard && dailyCard.d === localDayKey());      const histAll = (() => {
@@ -4756,10 +5462,10 @@ window.__ModuleLoader__.load({
           '这里只是把你抽过的牌数一遍，不做推断，也不下结论。')
       );
 
-      // 三张牌阵一张一张挑：点过的格子只翻成牌背并锁住，挑满三张才允许一键翻开
+      // 三张牌阵一张一张挑：点过的格子只翻成牌背并锁住，挑满才允许一键翻开
       const pickWant = (pickRef.current && pickRef.current.want) || 1;
       const pickReady = phase === 'pick' && pickWant > 1 && picked.length >= pickWant;
-      // 张数要和列数整除：三张模式 5 列 × 2 行 = 10 张（9 张会剩个孤零零的缺口，很难看）；单张/每日 3×3 = 9 张
+      // 张数要和列数整除：多张模式 5 列 × 2 行 = 10 张（1/3/5/7/10 都装得下，格子只是挑位不占满）
       const pickCount = pickWant > 1 ? 10 : 9;
       const pickGrid = h('div', { className: 'srs-pickgrid' + (pickWant > 1 ? ' is-three' : '') },
         Array.from({ length: pickCount }).map((_, i) => {
@@ -4772,19 +5478,26 @@ window.__ModuleLoader__.load({
             'data-pick': String(i),
             'data-ord': on ? String(ord + 1) : '',
             'data-act': dead ? 'noop' : 'pick-' + i,
-            title: on ? '已挑第 ' + (ord + 1) + ' 张' : (pickReady ? '已经挑满三张' : '点这张'),
+            title: on ? '已挑第 ' + (ord + 1) + ' 张' : (pickReady ? '已经挑满了' : '点这张'),
             style: { backgroundImage: 'url("/srs/cards/back.webp?v=' + VERSION + '")' },
           });
         }));
 
-      const pickWord = pickWant > 3 ? '十张' : '三张';
+      // 按牌阵张数给词：1 张 / 三张 / 五张 / 七张 / 十张
+      const pickWordMap = { 1: '一张', 3: '三张', 5: '五张', 7: '七张', 10: '十张' };
+      // 抽牌按钮文案：按当前牌阵张数生成「抽五张 / 再抽七张」这类
+      const drawBtnLabel = (spread, ph) => {
+        const k = SPREAD_WANT[spread] || 1;
+        const word = pickWordMap[k] || (k + ' 张');
+        return (ph === 'shown' ? '再抽' : '抽') + word;
+      };
+      const pickWord = pickWordMap[pickWant] || (pickWant + ' 张');
       const pickHint = pickWant <= 1
         ? '牌摊开了，挑一张。'
         : (pickReady
-          ? pickWord + '都挑好了，翻开看看。'
+          ? '这一局' + pickWord + '都挑好了，翻开看看。'
           : (picked.length === 0 ? '牌摊开了，先挑第一张。'
-            : (picked.length === 1 ? '收好了，再挑第二张。'
-              : (picked.length + 1 >= pickWant ? '最后一张。' : '接着挑。'))));
+            : (picked.length + 1 >= pickWant ? '最后一张。' : '接着挑。')));
 
       const waitZone = picked.length
         ? h('div', { className: 'srs-wait' },
@@ -4799,7 +5512,7 @@ window.__ModuleLoader__.load({
                 alt: '',
                 draggable: false,
               }),
-              h('div', { className: 'srs-wait-lab' }, (pickWant > 3 ? CELTIC_LABEL[i] : SPREAD_LABEL[i]) || '')
+              h('div', { className: 'srs-wait-lab' }, ((SPREAD_POS[(pickRef.current && pickRef.current.mode) || cfg.spread] || SPREAD_LABEL)[i]) || '')
             ))))
         : null;
 
@@ -4888,9 +5601,54 @@ window.__ModuleLoader__.load({
           h('button', { 'data-act': 'detail-brief', className: detailFull ? '' : 'on' }, '简'),
           h('button', { 'data-act': 'detail-full', className: detailFull ? 'on' : '' }, '详')));
 
+      // ── 富解读块：短摘要常显；「展开全文」看完整 6–8 段；「送进对话」把全文发到当前会话 ──
+      // 与配置页「牌义 简/详」正交：detail 管每张牌说多深，这里管整盘一次露多少。
+      const richPicks = (results && results.length) ? results : (result ? [result] : []);
+      const richMode = cfg.spread === 'daily' ? 'one' : (SPREAD_WANT[cfg.spread] ? cfg.spread : (richPicks.length > 1 ? 'three' : 'one'));
+      const richSummary = richPicks.length ? readingSummary(richPicks, richMode, question, cfg.direction) : '';
+      const richFull = richPicks.length ? ifReadingFull(richPicks, richMode, question, cfg.direction) : [];
+      const richBlock = richPicks.length
+        ? h('div', { className: 'srs-reading', style: { marginTop: '10px' } },
+          h('div', { className: 'srs-reading-cap' },
+            h('span', null, '解读'),
+            h('div', { className: 'srs-seg' },
+              h('button', { 'data-act': 'reading-toggle' }, readingOpen ? '收起' : '展开全文'),
+              // 「同种子可复现」不只是句承诺：这里给一个能点的入口，不用去历史里翻
+              h('button', { 'data-act': 'reading-replay' }, '重放'),
+              h('button', { 'data-act': 'reading-send', disabled: chatBusy }, chatBusy ? '发送中…' : '送进对话'))),
+          h('div', { className: 'srs-reading-body' },
+            (readingOpen ? richFull : richSummary.split('\n\n')).map((p, i) => h('p', { key: 'rp' + i }, p))))
+        : null;
+
+      // 富解读全文段落（懒计算：只有展开时才需要完整 6–8 段）
+      function ifReadingFull(picks, mode, q, dir) {
+        return richReading(picks, mode, q, dir);
+      }
+
       const tarotBody = h('div', null,
         deckOpen ? deckBody : (histOpen ? histBody : (reviewOpen ? reviewBody : h('div', null,
-        spreadSeg,
+        // 抽牌表单整块装进 .srs-block：与情绪页同一种深色卡片底，半透明金底按钮的观感才完全一致
+        h('div', { className: 'srs-block' },
+          // 所问之事：一句话，只进解读开场，不参与抽牌随机
+          h('div', { className: 'srs-form' },
+            formLab('pen', '所问'),
+            h('input', {
+              className: 'srs-q-input' + (qErr ? ' is-err' : ''),
+              ref: qInputRef,
+              placeholder: needQuestion(curSpread)
+                ? '写一句你要问的事（这档牌阵必填）'
+                : '用一句话描述所问之事（可留空）',
+              value: question,
+              maxLength: 120,
+              'aria-invalid': qErr ? 'true' : 'false',
+              onInput: (e) => {
+                setQuestion(e.target.value);
+                if (qErr && String(e.target.value || '').trim()) setQErr('');
+              },
+            })),
+          qErr ? h('div', { className: 'srs-q-err' }, qErr) : null,
+          spreadSeg,
+          dirSeg),
         phase === 'pick' ? h('div', null,
           h('div', { className: 'srs-note', style: { margin: '10px 0 6px' } }, pickHint),
           pickGrid,
@@ -4898,10 +5656,9 @@ window.__ModuleLoader__.load({
         ) : null,
         phase === 'pick'
           ? null
-          : cfg.spread === 'celtic' && results.length === 10
-          ? celticView
-          : cfg.spread === 'three' && results.length === 3
-          ? threeView
+          // 多张牌阵（3/5/7/10）统一走 multiView；1 张走下面的单卡槽
+          : (SPREAD_WANT[cfg.spread] > 1 && results.length === SPREAD_WANT[cfg.spread])
+          ? h('div', null, multiView(cfg.spread), richBlock)
           : (phase === 'idle'
           ? h('div', { className: 'srs-empty-art' },
             // 空态不再贴一张成品牌叠图：直接用 back.webp 现场叠三张，跟抽牌后的牌背永远同一张
@@ -4938,19 +5695,18 @@ window.__ModuleLoader__.load({
                   h('p', { className: 'srs-other-cap' }, result.reversed ? '若它是正位：' : '若它是逆位：'),
                   (resultOther.lines || []).map((line, i) => h('p', { key: 'o' + i }, line)))
                 : null,
-              detailFull ? h('div', { className: 'srs-note' }, resultMeta) : null)
+              detailFull ? h('div', { className: 'srs-note' }, resultMeta) : null,
+              richBlock)
             : h('div', { className: 'srs-empty', style: { marginTop: '12px' } },
               phase === 'error'
                 ? '牌库没读到。检查插件是否装好，或者重启 DSH 再试。'
                 : '心里想一件事，想着它就好，不用说得清楚。抽一张，看它说什么。')),
         h('div', { className: 'srs-menu-row', style: { marginTop: '10px' } },
-          h('span', { className: 'srs-row-cap' }, capIcon('log'), h('span', null, '历史')),
+          h('span', { className: 'srs-row-cap', style: { color: 'var(--srs-gold)' } }, capIcon('log'), h('span', null, '历史')),
           h('div', { className: 'srs-seg srs-seg-lg' },
             h('button', { 'data-act': 'hist-open' }, histCount + ' 条'),
             h('button', { 'data-act': 'review-open' }, '回顾'),
-            h('button', { 'data-act': 'deck-open' }, '牌库'),
-            h('button', { 'data-act': 'export-card', disabled: phase !== 'shown' || exporting }, exporting ? '画图中…' : '存图'),
-            h('button', { 'data-act': 'export-card-34', disabled: phase !== 'shown' || exporting, title: '3:4 小红书竖图' }, '小红书')))
+            h('button', { 'data-act': 'deck-open' }, '牌库')))
         )))
       );
 
@@ -4989,12 +5745,18 @@ window.__ModuleLoader__.load({
           || String(it.date || '').indexOf(billQn) >= 0
           || (isFinite(Number(it.amount)) && Number(it.amount).toFixed(2).indexOf(billQn) >= 0))
         : items;
+      // 只铺前 billLimit 条（items 已按 ts 倒序，前 N 条就是最新 N 条）
+      const itemsPage = itemsShown.slice(0, billLimit);
+      const itemsMore = itemsShown.length - itemsPage.length;
       // 告急线 / 今日预算：与配置页同一口径（0 = 关）
       const warnLow = Number(billCfg.warnLow) || 0;
       const budget = Number(billCfg.budget) || 0;
       const lowNow = warnLow > 0 && bq && typeof bq.balance === 'number' && bq.balance < warnLow;
       const todayUsedNow = Number(bq && bq.todayUsed) || 0;
       const budgetPct = (budget > 0) ? Math.min(100, Math.round((todayUsedNow / budget) * 100)) : 0;
+      // 搜索词一变就回到最新 20 条：否则「先截断再搜索」会把老记录搜不到
+      React.useEffect(() => { setBillLimit(20); }, [billQ]);
+
       const billBody = h('div', null,
         // ① 余额（大数字）+ 刷新
         h('div', { className: 'srs-bill-hero' },
@@ -5140,8 +5902,10 @@ window.__ModuleLoader__.load({
         h('div', { className: 'srs-bill-caprow', style: { marginTop: '12px' } },
           cap('明细', 'list'),
           uq ? h('span', { className: 'srs-bill-sub' },
-            (billQn ? '命中 ' + itemsShown.length + ' / ' : '共 ') + (uq.itemCount || 0) + ' 条 · '
-            + kTok(uq.totals && uq.totals.tokens) + ' tok') : null),
+            (billQn
+              ? '命中 ' + itemsShown.length + ' 条 · 显示前 ' + itemsPage.length
+              : '共 ' + (uq.itemCount || 0) + ' 条 · 显示最新 ' + itemsPage.length)
+            + ' · ' + kTok(uq.totals && uq.totals.tokens) + ' tok') : null),
         h('div', { className: 'srs-search' },
           h('input', {
             type: 'search',
@@ -5150,21 +5914,36 @@ window.__ModuleLoader__.load({
             onChange: (e) => setBillQ(e.target.value),
           })),
         itemsShown.length
-          ? h('div', { className: 'srs-items' }, itemsShown.map((it, i) => h('div', { key: 'it' + i, className: 'srs-item' },
+          ? h('div', {
+            className: 'srs-items',
+            // 滚到底自动续一批；续完 scrollHeight 变长，不会连环触发
+            onScroll: (e) => {
+              const el = e.currentTarget;
+              if (!itemsMore) return;
+              if (el.scrollTop + el.clientHeight >= el.scrollHeight - 24) {
+                setBillLimit((n) => n + 20);
+              }
+            },
+          }, itemsPage.map((it, i) => h('div', { key: 'it' + i, className: 'srs-item' },
             h('span', { className: 't' }, it.date === (bq && bq.day) ? it.time : String(it.date).slice(5) + ' ' + it.time),
             h('span', { className: 'm', title: it.model + (it.provider ? ' @' + it.provider : '') },
               it.model || '未知模型'),
             h('span', { className: 'a' }, it.unpriced ? '未计价' : money(Number(it.amount) || 0)))))
           : h('div', { className: 'srs-bill-note' },
             billQn ? '没有匹配「' + billQ + '」的记录。' : (uq ? '这个窗口没有明细。' : usageEmptyHint)),
+        itemsMore > 0
+          ? h('div', { className: 'srs-row2', style: { marginTop: '6px' } },
+            h('button', { 'data-act': 'bill-more' }, '还有 ' + itemsMore + ' 条 · 再看 20 条'))
+          : null,
         uq && uq.retention
           ? h('div', { className: 'srs-bill-note', style: { marginTop: '8px' } },
             '明细保留 ' + uq.retention.turnDays + ' 天 / ' + uq.retention.turnsCap + ' 条（现 ' + uq.retention.turnsLive + ' 条，归档 ' + uq.retention.archived + ' 条）')
           : null
       );
 
-      // ── 占卜页 ──────────────────────────────────────────────────
-      const DIVINE_MODES = [['daily', '每日一签'], ['mood', '情绪'], ['either', '二选一'], ['duo', '双人牌'], ['relation', '关系阵']];
+      // ── 情绪页（原占卜页）：情绪打卡 + 缓一缓 + 许愿瓶 ─────────────
+      // 塔罗/二选一/关系阵已并入塔罗页；双人牌已下线。
+      const DIVINE_MODES = [['mood', '心情']];
       const moodToday = mood && mood.d === localDayKey() ? mood.mood : null;
       const moodView = h('div', { className: 'srs-block', style: { marginTop: '10px' } },
         cap('今天心情怎么样', 'heart'),
@@ -5173,205 +5952,129 @@ window.__ModuleLoader__.load({
             key: 'md' + id,
             'data-act': 'mood-' + id,
             className: moodToday === id ? 'on' : '',
+            disabled: moodBusy,
           }, label))),
-        moodPick
+        moodShuffling
+          // ① 洗牌中：三张牌背在抖，文字位先占空，避免出牌时整块跳动
           ? h('div', { className: 'srs-daily', style: { marginTop: '10px' } },
-            h('img', {
-              className: 'srs-daily-card',
-              src: '/srs/cards/thumb/' + moodPick.card.id + '.webp?v=' + VERSION,
-              alt: '',
-              draggable: false,
-              style: moodPick.reversed ? { transform: 'rotate(180deg)' } : null,
-            }),
+            h('div', { className: 'srs-mood-shuf' },
+              h('div', { className: 'srs-shuf' }, [1, 2, 3].map((n) => h('i', { key: 'ms' + n })))),
             h('div', { className: 'srs-daily-txt' },
-              h('div', { className: 'srs-daily-name' }, moodPick.card.name_zh + (moodPick.reversed ? ' · 逆位' : ' · 正位')),
-              h('div', { className: 'srs-note' }, moodPick.empathy || ''),
-              h('div', { className: 'srs-daily-tip' }, '不解释吉凶，只回应你现在的心情。')))
-          : h('div', { className: 'srs-note', style: { marginTop: '8px' } }, '选一个最接近的，我陪你抽一张。')
+              h('div', { className: 'srs-note' }, '她在洗牌…')))
+          : (moodPick
+            // ② 出牌：牌背 → 380ms 翻成牌面，牌名与共情句依次淡入
+            ? h('div', { className: 'srs-daily', key: 'mc' + moodSeq, style: { marginTop: '10px' } },
+              h('div', { className: 'srs-flip srs-flip-mood' },
+                h('div', { className: 'srs-flip-in' },
+                  h('div', { className: 'srs-flip-face srs-flip-front' },
+                    h('img', {
+                      src: '/srs/cards/thumb/' + moodPick.card.id + '.webp?v=' + VERSION,
+                      alt: '',
+                      draggable: false,
+                      style: moodPick.reversed ? { transform: 'rotate(180deg)' } : null,
+                    })),
+                  h('img', {
+                    className: 'srs-flip-face srs-flip-back',
+                    src: '/srs/cards/back.webp?v=' + VERSION,
+                    alt: '',
+                    draggable: false,
+                  }))),
+              h('div', { className: 'srs-daily-txt' },
+                h('div', { className: 'srs-daily-name srs-fadein', style: { '--fd': '0.16s' } },
+                  moodPick.card.name_zh + (moodPick.reversed ? ' · 逆位' : ' · 正位')),
+                h('div', { className: 'srs-note srs-fadein', style: { '--fd': '0.24s' } }, moodPick.empathy || ''),
+                h('div', { className: 'srs-daily-tip srs-fadein', style: { '--fd': '0.32s' } },
+                  '不解释吉凶，只回应你现在的心情。')))
+            : h('div', { className: 'srs-note', style: { marginTop: '8px' } }, '选一个最接近的，我陪你抽一张。')),
+        h('div', { className: 'srs-foot', style: { marginTop: '10px', paddingTop: '10px' } },
+          h('button', { className: 'srs-btn primary', 'data-act': 'divine-draw', disabled: moodBusy },
+            moodBusy ? '抽牌中…' : (moodPick ? '再抽一张' : '抽一张')))
       );
 
-      const divineSeg = h('div', { className: 'srs-menu-row' },
-        h('span', null, '占法'),
-        h('div', { className: 'srs-seg' },
-          DIVINE_MODES.map((m) => h('button', {
-            key: 'dm' + m[0],
-            'data-act': 'divine-' + m[0],
-            className: divineMode === m[0] ? 'on' : '',
-          }, m[1]))));
+      // 情绪页不再需要「占法」切换（只剩情绪），整块去掉。
 
       // 二选一 / 关系阵的牌：牌背先亮着，按序号错开翻成牌面（i 同时决定动画延迟）
-      // 标签与牌名跟着翻牌一起淡入 —— 牌背还亮着就把答案写出来 = 剧透
-      const miniCard = (r, label, key, i) => {
-        const fd = ((i || 0) * 0.12);
-        return h('div', { key, className: 'srs-sp-cell' },
-          h('div', { className: 'srs-flip', style: { '--fd': fd + 's' } },
-            h('div', { className: 'srs-flip-in' },
-              h('div', { className: 'srs-flip-face srs-flip-front' },
-                h('img', {
-                  src: '/srs/cards/thumb/' + r.card.id + '.webp?v=' + VERSION,
-                  alt: '',
-                  draggable: false,
-                  style: r.reversed ? { transform: 'rotate(180deg)' } : null,
-                })),
-              h('img', {
-                className: 'srs-flip-face srs-flip-back',
-                src: '/srs/cards/back.webp?v=' + VERSION,
-                alt: '',
-                draggable: false,
-              }))),
-          label ? h('div', { className: 'srs-sp-lab srs-fadein', style: { '--fd': (fd + 0.34) + 's' } }, label) : null,
-          h('div', { className: 'srs-sp-name srs-fadein', style: { '--fd': (fd + 0.34) + 's' } },
-            r.card.name_zh + (r.reversed ? '·逆' : '·正')));
-      };
-
       const dailyLocked = daily && daily.d === todayKey();
-      const eitherInfo = divineMode === 'either' ? eitherScore(divineCards) : null;
-      const eitherKeyLine = divineCards[1] ? ((divineCards[1].meaning.lines || [])[0] || '') : '';
-      let eitherVerdict = '';
-      if (eitherInfo) {
-        if (eitherInfo.win === 'both') eitherVerdict = '两条路差不多，看哪个代价你更愿意付。';
-        else if (eitherInfo.win === 'A') eitherVerdict = '整体偏向 A：关键那张是「' + eitherKeyLine + '」。';
-        else eitherVerdict = '整体偏向 B：关键那张是「' + eitherKeyLine + '」。';
-      }
 
-      const duo = divineMode === 'duo' ? duoReading(divineCards) : null;
-
-      const modeBody = divineMode === 'mood'
-          ? moodView
-          : divineMode === 'daily'
-          ? h('div', { className: 'srs-block', style: { marginTop: '10px' } },
-            cap(dailyLocked ? '今天的签' : '还没抽今天的签', 'seal'),
-            divineCards.length && divineCards[0]
-              ? h('div', { className: 'srs-daily' },
-                h('img', {
-                  className: 'srs-daily-card',
-                  src: '/srs/cards/thumb/' + divineCards[0].card.id + '.webp?v=' + VERSION,
-                  alt: '',
-                  draggable: false,
-                  style: divineCards[0].reversed ? { transform: 'rotate(180deg)' } : null,
-                }),
-                h('div', { className: 'srs-daily-txt' },
-                  h('div', { className: 'srs-daily-name' }, divineCards[0].card.name_zh + (divineCards[0].reversed ? ' · 逆位' : ' · 正位')),
-                  h('div', { className: 'srs-note' }, (divineCards[0].meaning.lines || [])[0] || ''),
-                  daily && daily.color
-                    ? h('div', { className: 'srs-daily-lucky' },
-                      h('span', { className: 'srs-swatch srs-swatch-inl', style: { background: daily.color[1] } }),
-                      '幸运色 ' + daily.color[0])
-                    : null,
-                  h('div', { className: 'srs-daily-tip' }, dailyLocked ? '今天的已经定了，明天再来。' : '')
-                )
-              )
-              : h('div', { className: 'srs-note' }, '抽一支今天的签，一句话就够了。'),
-            h('div', { className: 'srs-foot', style: { marginTop: '10px', paddingTop: '10px' } },
-              h('button', {
-                className: 'srs-btn primary',
-                'data-act': 'divine-draw',
-                disabled: divineBusy || dailyLocked,
-              }, dailyLocked ? '明天再来' : '抽一签')))
-          : divineMode === 'either'
-            ? h('div', { className: 'srs-block', style: { marginTop: '10px' } },
-              cap('两条路，各抽三张', 'fork'),
-              divineCards.length === 5
-                ? h('div', null,
-                  h('div', { className: 'srs-spread srs-spread-wrap' },
-                    divineCards.map((r, i) => miniCard(r, ['A 路', '关键', 'A 结局', 'B 路', 'B 结局'][i], 'ec' + divineSeq + '-' + i, i))),
-                  h('div', {
-                    key: 'ec-txt-' + divineSeq,
-                    className: 'srs-lines srs-fadein',
-                    style: { marginTop: '8px', '--fd': (divineCards.length * 0.12 + 0.42) + 's' },
-                  },
-                    h('p', null, h('b', { style: { color: '#E7D9BC' } }, 'A 路：'), (divineCards[0].meaning.lines || [])[0] || ''),
-                    h('p', null, h('b', { style: { color: '#E7D9BC' } }, 'B 路：'), (divineCards[3].meaning.lines || [])[0] || ''),
-                    h('p', null, h('b', { style: { color: '#E7D9BC' } }, '结起来看：'), eitherVerdict)
-                  ))
-                : h('div', { className: 'srs-note' }, '想问两件事？先在心里分清 A 和 B。'),
-              h('div', { className: 'srs-foot', style: { marginTop: '10px', paddingTop: '10px' } },
-                h('button', { className: 'srs-btn primary', 'data-act': 'divine-draw', disabled: divineBusy },
-                  divineCards.length === 5 ? '再抽五张' : '抽五张')))
-            : divineMode === 'duo'
-              ? h('div', { className: 'srs-block', style: { marginTop: '10px' } },
-                cap('双人牌 · 你与他', 'heart'),
-                divineCards.length === 2 && duo
-                  ? h('div', null,
-                    h('div', { className: 'srs-spread srs-spread-wrap' },
-                      divineCards.map((r, i) => miniCard(r, ['你', '对方'][i], 'du' + divineSeq + '-' + i, i))),
-                    h('div', {
-                      key: 'du-txt-' + divineSeq,
-                      className: 'srs-lines srs-fadein',
-                      style: { marginTop: '8px', '--fd': (divineCards.length * 0.12 + 0.42) + 's' },
-                    },
-                      h('p', null, h('b', { style: { color: '#E7D9BC' } }, '现状：'), duo.tone),
-                      h('p', null, duo.line),
-                      h('p', null, h('b', { style: { color: '#E7D9BC' } }, '你现在能做的三件小事：')),
-                      duo.tips.map((t, i) => h('p', { key: 'dt' + i }, '· ' + t))),
-                    h('div', { className: 'srs-note' },
-                      '只写关系的现状与可能。他到底爱不爱你，这副牌不回答，也不该由牌回答。'))
-                  : h('div', { className: 'srs-note' }, '心里想一个人。一人一张，看的是你们之间。'),
-                h('div', { className: 'srs-foot', style: { marginTop: '10px', paddingTop: '10px' } },
-                  h('button', { className: 'srs-btn primary', 'data-act': 'divine-draw', disabled: divineBusy },
-                    divineCards.length === 2 ? '再抽两张' : '抽两张')))
-            : h('div', { className: 'srs-block', style: { marginTop: '10px' } },
-              cap('关系阵 · 七张', 'seven'),
-              divineCards.length === 7
-                ? h('div', null,
-                  h('div', { className: 'srs-spread srs-spread-wrap' },
-                    divineCards.map((r, i) => miniCard(r, ['我', '对方', '现状', '阻碍', '过去', '建议', '走向'][i], 'rl' + divineSeq + '-' + i, i))),
-                  h('div', {
-                    key: 'rl-txt-' + divineSeq,
-                    className: 'srs-lines srs-fadein',
-                    style: { marginTop: '8px', '--fd': (divineCards.length * 0.12 + 0.42) + 's' },
-                  },
-                    h('p', null, h('b', { style: { color: '#E7D9BC' } }, '现状：'), (divineCards[2].meaning.lines || [])[0] || ''),
-                    h('p', null, h('b', { style: { color: '#E7D9BC' } }, '阻碍：'), (divineCards[3].meaning.lines || [])[0] || ''),
-                    h('p', null, h('b', { style: { color: '#E7D9BC' } }, '建议：'), (divineCards[5].meaning.lines || [])[0] || ''),
-                    h('p', null, h('b', { style: { color: '#E7D9BC' } }, '走向：'), (divineCards[6].meaning.lines || [])[0] || ''))
-                  )
-                : h('div', { className: 'srs-note' }, '想一个人，再抽。只写关系现状与可能，不替你判断对方爱不爱你。'),
-              h('div', { className: 'srs-foot', style: { marginTop: '10px', paddingTop: '10px' } },
-                h('button', { className: 'srs-btn primary', 'data-act': 'divine-draw', disabled: divineBusy },
-                  divineCards.length === 7 ? '再抽七张' : '抽七张')));
+      // 情绪页现在只剩「情绪打卡」一种：塔罗抽牌全部收进塔罗页。
+      const modeBody = moodView;
 
       // W4 安神 3 分钟：4 秒吸 / 2 秒停 / 6 秒呼，圈跟着放大缩小
       const breatheUsed = 180 - breatheLeft;
       const breathePhase = breatheUsed % 12 < 4 ? '吸气' : (breatheUsed % 12 < 6 ? '屏住' : '呼气');
-      const breatheView = h('div', { className: 'srs-block', style: { marginTop: '10px' } },
-        cap('安神 3 分钟', 'moon'),
-        h('div', { className: 'srs-breathe-box' },
-          h('div', { className: 'srs-breathe-ring' },
-            h('div', { className: 'srs-breathe-core ph-' + (breathePhase === '吸气' ? 'in' : (breathePhase === '屏住' ? 'hold' : 'out')) }),
-            // 阶段与剩余时间压在圈里：面板内容区矮的时候，放圈下面会被挤出可视区
-            h('div', { className: 'srs-breathe-mid' },
-              h('div', { className: 'srs-breathe-phase' }, breathePhase),
-              h('div', { className: 'srs-breathe-left' },
-                Math.floor(breatheLeft / 60) + ':' + String(breatheLeft % 60).padStart(2, '0'))))),
-        h('div', { className: 'srs-note' }, '吸 4 秒、停 2 秒、呼 6 秒。随时可以停，不用坚持到最后一秒。'));
+      // 呼吸圈（只渲染内容，外层卡片由下面的「缓一缓」块统一承载）
+      const breatheInner = h('div', { className: 'srs-breathe-box' },
+        h('div', { className: 'srs-breathe-ring' },
+          h('div', { className: 'srs-breathe-core ph-' + (breathePhase === '吸气' ? 'in' : (breathePhase === '屏住' ? 'hold' : 'out')) }),
+          // 阶段与剩余时间压在圈里：面板内容区矮的时候，放圈下面会被挤出可视区
+          h('div', { className: 'srs-breathe-mid' },
+            h('div', { className: 'srs-breathe-phase' }, breathePhase),
+            h('div', { className: 'srs-breathe-left' },
+              Math.floor(breatheLeft / 60) + ':' + String(breatheLeft % 60).padStart(2, '0')))));
 
-      const breatheRow = h('div', { className: 'srs-menu-row', style: { marginTop: '6px' } },
-        h('span', { className: 'srs-row-cap' }, capIcon('moon'), h('span', null, '缓一缓')),
+      // 「缓一缓」与「许愿瓶」同一种卡片 + 金色标题（.srs-block + cap），
+      // 不再用灰色 .srs-row-cap，避免两处标题颜色/字号不一致。
+      const breatheBlock = h('div', { className: 'srs-block', style: { marginTop: '10px' } },
+        cap('缓一缓', 'moon'),
         h('div', { className: 'srs-seg' },
           h('button', { 'data-act': breatheOpen ? 'breathe-stop' : 'breathe-open' },
-            breatheOpen ? '停下' : '安神 3 分钟')));
+            breatheOpen ? '停下' : '安神 3 分钟')),
+        breatheOpen ? breatheInner : null,
+        breatheOpen ? h('div', { className: 'srs-note' }, '吸 4 秒、停 2 秒、呼 6 秒。随时可以停，不用坚持到最后一秒。') : null);
 
       // W17 许愿瓶：写一件封起来，到新月 / 满月 / 生日才开；封着时不显示内容
       const wishList = wishes.map((w) => {
         const left = daysUntil(w.openAt);
         const opened = !!w.openedAt;
+        const released = w.fate === 'released';
+        const kept = w.fate === 'kept';
         return h('div', { key: 'w' + w.id, className: 'srs-wish' + (opened ? ' is-open' : '') },
           h('div', { className: 'srs-wish-head' },
             h('span', { className: 'k' }, (WISH_WHEN[w.when] || '到日子') + ' · ' + w.openAt + ' 开'),
             h('span', { className: 'v' + (left <= 0 && !opened ? ' is-due' : '') },
-              opened ? '已开' : (left > 0 ? '还封着 · 还有 ' + left + ' 天' : '可以开了'))),
-          opened ? h('div', { className: 'srs-wish-text' }, w.text) : null,
+              released ? '已放下'
+                : (kept ? '收下了'
+                  : (opened ? '已开' : (left > 0 ? '还封着 · 还有 ' + left + ' 天' : '可以开了'))))),
+          // 放下后内容折叠（可恢复）：对应传统里「写下来、再撕掉」那一步，但不真删
+          released
+            ? h('div', { className: 'srs-wish-text srs-wish-folded' }, '（已放下 · ' + (w.reviewedAt || '') + '）')
+            : (opened ? h('div', { className: 'srs-wish-text' }, w.text) : null),
           (left <= 0 && !opened)
             ? h('div', { className: 'srs-row2' }, h('button', { 'data-act': 'wish-open-' + w.id }, '打开'))
             : null,
-          opened ? h('div', { className: 'srs-wish-meta' }, '写于 ' + w.at + ' · 开于 ' + w.openedAt) : null,
+          // 打开之后才给去向：收下 / 放下
+          (opened && !w.fate)
+            ? h('div', { className: 'srs-row2' },
+              h('button', { 'data-act': 'wish-keep-' + w.id }, '收下'),
+              h('button', { 'data-act': 'wish-release-' + w.id }, '放下'))
+            : null,
+          released
+            ? h('div', { className: 'srs-row2' }, h('button', { 'data-act': 'wish-restore-' + w.id }, '恢复'))
+            : null,
+          opened
+            ? h('div', { className: 'srs-wish-meta' },
+              '写于 ' + w.at + ' · 开于 ' + w.openedAt + (w.reviewedAt ? ' · 回看于 ' + w.reviewedAt : ''))
+            : null,
           h('button', { className: 'srs-per-del', 'data-act': 'wish-del-' + w.id }, '删'));
       });
 
       const wishView = h('div', { className: 'srs-block', style: { marginTop: '10px' } },
         cap('许愿瓶', 'seal'),
-        h('textarea', { ref: wishRef, className: 'srs-area', rows: 3, placeholder: '写一件想封起来的事…' }),
+        h('textarea', {
+          ref: wishRef,
+          className: 'srs-area',
+          rows: 3,
+          placeholder: moonHint === 'newmoon'
+            ? '写一件想在这一个月里做到的事（越具体越好）…'
+            : '写一件想封起来的事…',
+        }),
+        // 新月当天的引导：具体、可感知、一个月内能实现——写太远反而落不了地
+        moonHint === 'newmoon'
+          ? h('div', { className: 'srs-note srs-note-s' }, '新月适合起头。写 1–3 件这一个月里做得到的事，别写太远。')
+          : null,
+        moonHint === 'fullmoon'
+          ? h('div', { className: 'srs-note srs-note-s' }, '满月适合收一收：到期的那几条，打开后可以选「收下」或「放下」。')
+          : null,
         h('div', { className: 'srs-row' }, h('span', { className: 'k' }, '什么时候开'),
           h('div', { className: 'srs-seg srs-seg-wrap' },
             WISH_TAB.map(([k, label]) => h('button', {
@@ -5387,7 +6090,8 @@ window.__ModuleLoader__.load({
           ? h('div', { className: 'srs-wishlist' }, wishList)
           : h('div', { className: 'srs-note' }, '瓶子还是空的。'));
 
-      const divineBody = h('div', null, divineSeg, breatheRow, breatheOpen ? breatheView : modeBody, wishView);
+      // 情绪页顺序：今天心情怎么样 → 缓一缓（含展开的呼吸圈）→ 许愿瓶
+      const divineBody = h('div', null, modeBody, breatheBlock, wishView);
 
       // ── 星座页 ──────────────────────────────────────────────────
       // 选中优先级：手动点过 > 档案生日 > 今天的太阳星座（没填生日也不该卡死在摩羯）
@@ -5396,6 +6100,7 @@ window.__ModuleLoader__.load({
         || signFromBirthday(profile.birthday)
         || signOf(todayMd.getMonth() + 1, todayMd.getDate())
         || 'aries';
+      signRef.current = mySignId;   // 存图导出按它取数，保证和页面显示的是同一个星座
       const card = todayCard(mySignId, HORO, new Date());
       const wear = wearPlan(card, HORO);
       const starsOf = (n) => '★★★★★'.slice(0, n) + '☆☆☆☆☆'.slice(0, 5 - n);
@@ -5500,7 +6205,7 @@ window.__ModuleLoader__.load({
             rows: 7,
             placeholder: '一行一句，空行会被忽略',
           }),
-          h('div', { className: 'srs-note' }, '改完点保存，只影响这台机器；「恢复默认」会清掉这一组的改动。'),
+          h('div', { className: 'srs-note srs-note-s' }, '改完点保存，只影响这台机器；「恢复默认」会清掉这一组的改动。'),
           h('div', { className: 'srs-row2' },
             h('button', { className: 'p', 'data-act': 'save-lines' }, '保存'),
             h('button', { 'data-act': 'reset-lines' }, '恢复默认'),
@@ -5571,6 +6276,16 @@ window.__ModuleLoader__.load({
           h('div', { className: 'srs-note srs-note-s' },
             '内置 ' + LINE_GROUPS.reduce((n, g) => n + (LINES[g[0]] || []).length, 0) + ' 句，可逐行改，也可整组恢复。')),
 
+        // D 层（0.57.0）：会话联动 + 工具反应 + 面板对话入口
+        h('div', { className: 'srs-block' },
+          cap('与 DSH 联动', 'star'),
+          h('button', { className: 'srs-menu-act srs-switch' + ((cfg.react || {}).mood !== false ? ' on' : ''), 'data-act': 'toggle-react-mood' },
+            h('span', { className: 't' }, '开工收工反应'), h('i', { className: 'sw' })),
+          h('button', { className: 'srs-menu-act srs-switch' + ((cfg.react || {}).tool !== false ? ' on' : ''), 'data-act': 'toggle-react-tool' },
+            h('span', { className: 't' }, '抽牌工具反应'), h('i', { className: 'sw' })),
+          h('div', { className: 'srs-note srs-note-s' },
+            '这两个管她在 AI 干活、报错、收工和被调去抽牌时的姿势与台词。')),
+
         // C8 每日一牌提醒：到点她还记着今天没抽，就冒一句；抽过了不打扰
         h('div', { className: 'srs-block' },
           cap('每日一牌提醒', 'clock'),
@@ -5586,7 +6301,12 @@ window.__ModuleLoader__.load({
             h('div', { className: 'srs-seg' },
               h('button', { 'data-act': 'remind-test' }, '现在就说一遍'))),
           h('div', { className: 'srs-note srs-note-s' },
-            '到点时她还记着「今天还没抽」就冒一句 + 敲一声铃；当天已经抽过、或当天已经提醒过，就不再吵。关掉时既不说话也不响铃。')),
+            '到点时她还记着「今天还没抽」就冒一句 + 敲一声铃；当天已经抽过、或当天已经提醒过，就不再吵。关掉时既不说话也不响铃。'),
+          // W5 月相提醒：只在朔望当天开口，其余日子完全安静
+          h('button', { className: 'srs-menu-act srs-switch' + (remCfg.moon === true ? ' on' : ''), 'data-act': 'toggle-remind-moon' },
+            h('span', { className: 't' }, '新月 / 满月提醒'), h('i', { className: 'sw' })),
+          h('div', { className: 'srs-note srs-note-s' },
+            '只在朔望当天说一次：新月提醒起头写一件一个月内做得到的事，满月提醒回头看看封着的。其余日子不开口。')),
 
         // 计费提醒（仿青云剑仙）：余额告急线 + 今日预算，两项设成「关」就不提醒
         h('div', { className: 'srs-block' },
@@ -5629,7 +6349,7 @@ window.__ModuleLoader__.load({
             h('span', { className: 'v' }, 'Alt+S 面板 · Alt+Z 抽一张')),
           h('button', { className: 'srs-menu-act srs-switch' + (cfg.onlyPanel ? ' on' : ''), 'data-act': 'toggle-only-panel' },
             h('span', { className: 't' }, '只留水晶球'), h('i', { className: 'sw' })),
-          h('div', { className: 'srs-note' }, '常驻她站在角上；「只留水晶球」把人收起来。')),
+          h('div', { className: 'srs-note srs-note-s' }, '常驻她站在角上；「只留水晶球」把人收起来。')),
 
         // 人物姿态：固定某一张，或交回自动（闲置时自己换）
         h('div', { className: 'srs-block' },
@@ -5667,7 +6387,7 @@ window.__ModuleLoader__.load({
             h('div', { className: 'srs-seg' },
               wipeArm ? h('button', { className: 'on', 'data-act': 'wipe-all-yes' }, '确认清空') : h('button', { 'data-act': 'wipe-all' }, '清空'),
               wipeArm ? h('button', { 'data-act': 'wipe-all-cancel' }, '取消') : null)),
-          h('div', { className: 'srs-note' }, '清空会删掉设置、历史、情绪与档案，不可找回。'))
+          h('div', { className: 'srs-note srs-note-s' }, '清空会删掉设置、历史、情绪与档案，不可找回。'))
       );
 
       // ── 档案页（密码门 → 内容）──────────────────────────────────
@@ -5776,18 +6496,33 @@ window.__ModuleLoader__.load({
             h('div', { className: 'srs-match-fz' },
               '坤 ' + matchOut.pillars[1]),
             matchOut.items.map((it, i) => h('div', { key: 'mi' + i, className: 'srs-match-item' },
-              h('span', { className: 'k' }, it.name),
-              h('span', { className: 'n' }, it.note),
-              h('span', { className: 'd ' + it.tag }, (it.delta > 0 ? '+' : '') + it.delta))),
+              h('div', { className: 'srs-match-line' },
+                h('span', { className: 'k' }, it.name),
+                h('span', { className: 'd ' + it.tag }, (it.delta > 0 ? '+' : '') + it.delta)),
+              h('span', { className: 'n' }, it.note))),
+            // 明细层：只列不断分（属相只影响表层印象，主轴是日柱）
+            h('div', { className: 'srs-match-cap' }, '明细'),
+            (matchOut.detail || []).map((it, i) => h('div', { key: 'md' + i, className: 'srs-match-item' },
+              h('div', { className: 'srs-match-line' },
+                h('span', { className: 'k' }, it.k),
+                h('span', { className: 'd ' + it.tag }, (it.d > 0 ? '+' : '') + it.d)),
+              h('span', { className: 'n' }, it.v + '：' + it.note))),
+            matchOut.tally
+              ? h('div', { className: 'srs-cyc-line', style: { marginTop: '4px' } },
+                '吉象 ' + matchOut.tally.good + ' · 凶象 ' + matchOut.tally.bad + ' · ' + matchOut.tally.lean)
+              : null,
             h('div', { className: 'srs-match-cap' }, '现在能做的三件小事'),
             matchOut.tips.map((t, i) => h('div', { key: 'mt' + i, className: 'srs-cyc-line' }, (i + 1) + '. ' + t)))
           : h('div', { className: 'srs-cyc-line', style: { padding: '8px 0' } },
             '填双方生日（时辰不详就空着），点下面的「匹配」。'),
-        h('div', { className: 'srs-note srs-note-s' },
-          '时辰按 23–01 子、01–03 丑 这样排；子时跨两天，晚子（23–24）按次日算日柱，所以拆成早晚两档。'
-          + '只看年支（生肖）、日支（配偶宫）、日干五行、年柱纳音、五行互补这五项结构；'
-          + '分数是五项加权后的合成，单项相冲不等于整体不合，反过来也一样。'
-          + '出的是倾向与建议，不是结局，也不回答「他爱不爱你」。'));
+        // 结论与口径说明之间拉一条线，别让注释糊在结果后面
+        h('div', { className: 'srs-match-sep' }),
+        h('div', { className: 'srs-match-hint' },
+          h('p', null, h('b', null, '时辰'), '23–01 子、01–03 丑；晚子（23–24）按次日算日柱，故拆早晚两档'),
+          h('p', null, h('b', null, '打分'), '日主（双向取平均）+ 夫妻宫（日支）+ 五行互补，三个维度合成'),
+          h('p', null, h('b', null, '喜用'), '按「得令 3 / 得地 1 / 得势 1」简化判定，与完整体一致率约 91%'),
+          h('p', null, h('b', null, '明细'), '属相、天干五合、十神、跨盘地支、纳音只列不计分——合婚以日柱为主，属相只看表层'),
+          h('p', { className: 'srs-match-hint-tail' }, '单项相冲不等于整体不合，反过来也一样。出的是倾向与建议，不是结局，也不回答「他爱不爱你」。')));
 
       const profileBody = priv ? h('div', null,
         h('div', { className: 'srs-block' },
@@ -5959,22 +6694,22 @@ window.__ModuleLoader__.load({
         h('p', { className: 'lead' }, '我住在这块屏幕的角上。你点我，我就说话；你不点，我就待着。'),
 
         h('div', { className: 'srs-about-h' }, '这是什么'),
-        h('p', null, '一个挂在 DSH 右下角的塔罗挂件。抽牌、看今天的星座、记一笔心情、看一眼这个月花了几块钱。不联网占卜，也不上传任何东西。'),
+        h('p', null, '一个挂在 DSH 角上的塔罗挂件。抽牌、看今天的星座、记一笔心情、看一眼这个月花了多少钱。不联网占卜，也不上传任何东西。'),
 
         h('div', { className: 'srs-about-h' }, '六个页面'),
         aboutLi([
-          ['塔罗', '：每日一牌 / 单张 / 三张 / 凯尔特十张。每位先说这一位在问什么，再看这张牌是正是逆。'],
-          ['占卜', '：每日一签、情绪打卡、二选一、双人牌、关系阵；另有安神三分钟与许愿瓶。'],
-          ['星座', '：按生日或手动选星座。月相按真实月龄算，水星、金星、火星逆行按低精度轨道算。'],
-          ['计费', '：数字只认宿主账本——逐轮读真实用量，按官方价目表算钱；价目表里没有的模型只记 token，标「未计价」。'],
-          ['配置', '：音效、环境音景、气泡、说话档位、台词、人物姿态、每日提醒。'],
-          ['档案', '：生日 → 本命牌 / 星座 / 四柱；周期日历；每天记一笔；婚配。全部加密存放。'],
+          ['塔罗', '：7 种牌阵——每日一牌（当天锁定）/ 单张指引 / 过去未来 / 五张局势 / 关系阵 / 凯尔特十字 / 二选一。多张牌阵要先写「所问」（空着不让抽，单张与每日一牌可不填）——没有焦点的问题，抽 7 张、10 张也只能读出空话。每位先说这一位在问什么，再看这张牌是正是逆，末尾给全盘的关节与建议。解读可展开全文、送进对话，或原样重放一遍；历史里也留着每一局，能回看重放。'],
+          ['心情', '：8 档心情点一下，洗牌、翻牌，出一张陪心情的牌（同一天第一次固定，再点就重抽）。另有缓一缓（吸 4 秒 / 停 2 秒 / 呼 6 秒）和许愿瓶——写一件事封起来，到新月 / 满月 / 生日 / 30 天后才开，到期后可以「收下」或「放下」。'],
+          ['星座', '：按生日或手动选星座。今日天象（月相、月亮星座、三颗行星逆行）+ 四维星级 + 宜忌 + 幸运三件 + 今天怎么穿，今日卡能存成 1080×1920 的图。'],
+          ['计费', '：数字只认宿主账本——逐轮读真实用量，按官方价目表算钱；价目表里没有的模型只记 token，标「未计价」。明细按最新 20 条一批铺开，滚到底自动续，也能搜模型 / 日期 / 金额。'],
+          ['配置', '：音效、环境音景、气泡、说话档位、台词、人物姿态、每日提醒、新月满月提醒、计费提醒、缩放、屏幕角、只留水晶球；设置可导出成 JSON。快捷键 Alt+S 开面板、Alt+Z 抽一张。'],
+          ['档案', '：生日 → 本命牌 / 星座 / 四柱；周期日历；每天记一笔（心情与睡眠）；婚配。全部用密码加密，关面板即锁档。'],
         ]),
 
-        h('div', { className: 'srs-about-h' }, '三条边界'),
+        h('div', { className: 'srs-about-h' }, '三件她不做的事'),
         aboutLi([
           [null, '不预测生死、疾病、官司、投资涨跌、婚丧嫁娶。牌只给倾向，不给判决。'],
-          [null, '不回答「他 / 她爱不爱你」。双人牌只写关系现状与可能。'],
+          [null, '不替你判断「他 / 她爱不爱你」。关系阵只写关系现状与可能。'],
           [null, '情绪、周期、月相对照都只是你自己的记录，不当医疗、避孕或用药依据。'],
         ]),
 
@@ -5987,18 +6722,21 @@ window.__ModuleLoader__.load({
 
         h('div', { className: 'srs-about-h' }, '怎么算的'),
         aboutLi([
-          ['牌序', '：crypto 取种子 → mulberry32 → Fisher–Yates。同一种子必然同一副顺序，所以历史能原样重放。'],
-          ['四柱', '：年按立春、月按节（低精度太阳视黄经，误差约 ±2 分钟），日按儒略日，时按五鼠遁；东八区平太阳时，不做真太阳时校正。'],
-          ['月相', '：平均黄经加主异常项，误差约 ±10°，只用来看气氛。'],
+          ['牌序', '：crypto 取种子 → mulberry32 → Fisher–Yates，一颗种子定下整副 78 张的顺序。挂件里是一张一张点的，出哪张还看你点的是第几格；历史里记着当时那几张牌，所以能原样重放。聊天里让我抽的走同一套引擎，只是固定从第 0 张起，所以单给种子就能复现。'],
+          ['所问', '：只在解读开场与「送进对话」里出现，不参与抽牌随机，也不落盘。每日一牌与单张指引可以留空；过去未来、五张局势、关系阵、凯尔特、二选一这五档必填——空着点抽牌会被拦下，聊天里让我抽也一样会被拒。'],
+          ['心情牌', '：每个心情各自记当天点了几次。第 1 次用「心情 + 日期」的日种子，同一天同一个心情稳定同一张；第 2 次起掺时间戳重抽，每次都不一样。'],
+          ['月相', '：平均黄经加主异常项，误差约 ±10°，只用来看气氛。新月的提醒与许愿瓶的到期日共用同一套判定（月龄距 0 或 14.77 在半天内），不会出现「她说满月、瓶子说还没到」。'],
           ['逆行', '：三颗行星的低精度开普勒轨道，只看地心黄经的正负，不报度数。'],
-          ['婚配', '：只比五项结构——年支（生肖）、日支（配偶宫）、日干五行、年柱纳音、五行互补。分数是加权合成，不是结局。'],
+          ['四柱', '：年按立春、月按节（低精度太阳视黄经，误差约 ±2 分钟），日按儒略日，时按五鼠遁；东八区平太阳时，不做真太阳时校正。'],
+          ['婚配', '：日主（双向取平均）、夫妻宫（日支）、五行互补三个维度合成；属相、天干五合、十神互看、跨盘地支、年命纳音列为明细，不计入总分——传统合婚以日柱为主，属相只影响表层印象。喜用按「得令 3 / 得地 1 / 得势 1」简化判定，与完整身强弱的一致率约 91%。分数是加权合成，不是结局。'],
         ]),
 
         h('div', { className: 'srs-about-h' }, '素材与许可'),
         aboutLi([
-          [null, '立绘 19 张，主人出图。'],
+          [null, '立绘 18 张，主人出图。'],
           [null, '牌面 78 张加牌背，Rider–Waite 体系。'],
-          [null, '音效 16 路，Mixkit Free License 的真实录音，清单见 NOTICE.md。'],
+          [null, '音效 16 路（8 路一次性音效 + 8 路环境音景），Mixkit Free License 的真实录音，清单见 NOTICE.md。'],
+          [null, '运势卡底图一张，主人提供。'],
           [null, '代码 MIT。'],
         ]),
 
@@ -6010,7 +6748,7 @@ window.__ModuleLoader__.load({
         h('div', { className: 'srs-about-sep' }),
         h('div', { className: 'srs-about-h' }, '赞赏'),
         h('p', null, '挂件免费，功能不设门槛。想请我喝碗茶，扫这张；不扫，功能一点不少。'),
-        h('img', { className: 'srs-about-shot tip', src: ABOUT_IMG.tip, alt: '赞赏码', draggable: false }),
+        h('img', { className: 'srs-about-shot', src: ABOUT_IMG.tip, alt: '赞赏码', draggable: false }),
         h('p', { className: 'srs-about-cap' }, '赞赏不换功能、不解锁内容、不插队'),
 
         h('div', { className: 'srs-about-sep' }),
@@ -6032,7 +6770,7 @@ window.__ModuleLoader__.load({
               : (phase === 'shown'
                 ? ((cfg.spread === 'three' || cfg.spread === 'celtic') ? '这一局' : '这一张')
                 : (cfg.spread === 'three' ? '抽三张牌' : (cfg.spread === 'celtic' ? '抽十张牌' : '抽一张牌'))))));
-      const titleMap = { tarot: tarotTitle, bill: '计费账单', divine: breatheOpen ? '安神' : '占卜', zodiac: '今日星座', sound: '配置', profile: '个人档案' };
+      const titleMap = { tarot: tarotTitle, bill: '计费账单', divine: breatheOpen ? '安神' : '心情', zodiac: '今日星座', sound: '配置', profile: '个人档案' };
 
       // ── 右上角水晶球入口（悬停人物才浮现，像剑仙的法宝）──────────
       const gearEl = h('div', {
@@ -6076,14 +6814,10 @@ window.__ModuleLoader__.load({
               disabled: phase === 'shuffling' || (cfg.spread === 'daily' && lockedToday && phase === 'shown'),
             },
               pickReady
-                ? (pickWant > 3 ? '翻开这十张' : '翻开这三张')
-                : (cfg.spread === 'celtic'
-                  ? (phase === 'shown' ? '再抽十张' : '抽十张')
-                  : (cfg.spread === 'three'
-                    ? (phase === 'shown' ? '再抽三张' : '抽三张')
-                    : (cfg.spread === 'daily'
-                      ? (lockedToday ? (phase === 'shown' ? '今天已定' : '看今天的牌') : '抽今日一牌')
-                      : (phase === 'shown' ? '再抽一张' : '抽一张')))))
+                ? ('翻开这' + pickWord)
+                : (cfg.spread === 'daily'
+                  ? (lockedToday ? (phase === 'shown' ? '今天已定' : '看今天的牌') : '抽今日一牌')
+                  : drawBtnLabel(cfg.spread, phase)))
             : null,
           h('button', { className: 'srs-btn', 'data-act': 'close' }, tab === 'tarot' ? '收起' : '关闭'))
       );
@@ -6108,7 +6842,7 @@ window.__ModuleLoader__.load({
       h('div', {
           className: 'srs-stage'
             // 2026-11-18：原来只给 idle-a / idle-b 挂呼吸，其余姿势是僵图。
-            // 自动模式现在会在 7 张站姿之间轮换，站姿若不动反而更假 —— 改成除打盹外全部常驻呼吸，
+            // 自动模式会在 13 张站姿之间轮转，站姿若不动反而更假 —— 改成除打盹外全部常驻呼吸，
             // 打盹用慢档（srs-breathe-slow，7.2s）。
             + (pose === 'sleep' ? ' srs-breathe-slow' : ' srs-breathe')
             + (mirrored ? ' srs-mirror' : ''),

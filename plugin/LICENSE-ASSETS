@@ -1,11 +1,15 @@
 # LICENSE-ASSETS — 美术素材授权（不适用 MIT）
 
 适用文件：
-  assets/sorceress/*.webp        8 张立绘
+  assets/sorceress/*.webp        18 张立绘
+  assets/ui/*.webp               8 张界面素材（桌布 / 星空底 / 按钮与图标底）
   assets/cards/big/*.webp        78 张牌面大图
   assets/cards/thumb/*.webp      78 张缩略
   assets/cards/back.webp         牌背
   icon.png / icon-256.png / icon-128.png
+
+不属于本条授权、但仍随包分发：
+  docs/about-assets/             项目所有者的交流群二维码与赞赏码，仅随插件展示，不得另作他用
 
 这些是原创素材，版权保留。允许：
   · 随本插件原样分发（含镜像、包管理器分发）

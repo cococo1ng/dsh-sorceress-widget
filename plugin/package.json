@@ -1,17 +1,20 @@
 {
   "name": "dsh-sorceress-widget",
-  "version": "0.56.0",
-  "description": "Tarot-reading witch companion for DeepSeek Harness: position-aware tarot spreads, daily horoscope with real moon phase, mood diary and a usage-bill panel. / 右下角会说话的塔罗女巫：抽塔罗（三张与凯尔特十张带位置含义）、每日星座（按真月相与元素取句）、情绪日记、计费账单。素材全内联，零外部进程依赖。",
+  "version": "0.59.0",
+  "description": "A witch in the corner of DSH: 7 position-aware tarot spreads (multi-card spreads require a question) with rich readings, a daily horoscope from real moon phase and three retrogrades, a mood diary with wish jar and breathing break, 13 auto-rotating standing poses, an encrypted archive for bazi, cycle and compatibility, plus a usage-bill panel. All assets inlined, no external process. / DSH 角上的塔罗女巫：7 种牌阵（多张牌阵必写「所问」）带位置含义与富解读、今日星座（真月相 + 水金火逆行 + 可存图）、心情与许愿瓶与缓一缓、13 张站姿自动轮转、加密档案（四柱 / 周期 / 婚配）、计费账单与月相提醒。素材全内联，不依赖外部进程。",
   "type": "module",
   "main": "index.js",
   "icon": "./icon.png",
   "exports": {
     ".": "./index.js",
     "./client": "./client.js",
-    "./icon": "./icon.png"
+    "./icon": "./icon.png",
+    "./locale/*.json": "./locale/*.json"
   },
   "files": [
     "index.js",
+    "srs-engine.mjs",
+    "srs-tools.mjs",
     "client.js",
     "cordis.patch.yml",
     "assets",
@@ -25,16 +28,20 @@
     "LICENSE",
     "LICENSE-ASSETS",
     "docs",
-    "screenshots.json"
+    "screenshots.json",
+    "locale"
   ],
   "keywords": [
     "dsh",
     "dsh-plugin",
     "deepseek-harness",
     "widget",
-    "desktop-pet",
     "tarot",
-    "sorceress"
+    "horoscope",
+    "moon-phase",
+    "journal",
+    "bazi",
+    "bill"
   ],
   "peerDependencies": {
     "@deepseek-ai/dsh-host-webserver": ">=0.1.0-rc.6"

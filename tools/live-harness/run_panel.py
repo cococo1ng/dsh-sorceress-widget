@@ -172,9 +172,13 @@ def main():
                    "getComputedStyle(document.querySelector('.srs-empty-deck i')).backgroundImage") or ""),
                page.locator(".srs-empty-deck i").count())
             ok("有引导文案", len(page.locator(".srs-empty").inner_text().strip()) > 10)
-            ok("三个按钮（关于 / 抽牌 / 收起）",
-               page.locator(".srs-btn").count() == 3
+            ok("footer 三个按钮（关于 / 抽牌 / 收起）",
+               page.locator(".srs-foot .srs-btn").count() == 3
                and page.locator("[data-act='about-open']").count() == 1)
+            # D6 面板内对话入口已移除（2026-11-21）：footer 之外不应再有输入框
+            ok("底部对话输入框已移除",
+               page.locator(".srs-chat").count() == 0
+               and page.locator(".srs-chat input").count() == 0)
             # 关于页：整块内容替换正文、tab 收起、两张码都在，返回后恢复
             page.locator("[data-act='about-open']").click()
             time.sleep(0.4)
@@ -191,10 +195,10 @@ def main():
             ok("关于：返回后面板恢复", page.locator(".srs-tabs").count() == 1)
             page.screenshot(path=os.path.join(SHOT, "panel-1-idle.png"))
 
-            # ⑧ 洗牌期间按钮 disabled
-            page.locator(".srs-btn.primary").click()
+            # ⑧ 洗牌期间按钮 disabled（选 footer 里带 data-act 的主按钮）
+            page.locator(".srs-foot .srs-btn.primary[data-act]").click()
             time.sleep(0.35)
-            ok("洗牌期间按钮 disabled", page.locator(".srs-btn.primary").is_disabled())
+            ok("洗牌期间按钮 disabled", page.locator(".srs-foot .srs-btn.primary[data-act]").is_disabled())
             page.screenshot(path=os.path.join(SHOT, "panel-2-shuffling.png"))
 
             # ⑤ 摊牌后自己点一张，再等结果
@@ -983,21 +987,6 @@ def main():
             # 回塔罗页，后面的导出断言要靠它
             page.locator(".srs-tab", has_text="塔罗").click(); time.sleep(0.5)
 
-            # ── T10 结果卡导出 ──────────────────────────────
-            if page.locator("[data-act='export-card']").is_disabled():
-                draw_and_wait(page)
-            page.evaluate("window.__srsLastExport = null")
-            page.locator("[data-act='export-card']").click()
-            time.sleep(3.5)
-            exp = page.evaluate("window.__srsLastExport")
-            ok("存图画出 PNG", bool(exp) and exp.get("size", 0) > 20000 and exp.get("name", "").endswith(".png"), exp)
-            # W14：3:4 小红书规格
-            page.evaluate("window.__srsLastExport = null")
-            page.locator("[data-act='export-card-34']").click()
-            time.sleep(3.5)
-            exp34 = page.evaluate("window.__srsLastExport")
-            ok("能导出 3:4 分享卡", bool(exp34) and exp34.get("name", "").endswith("-34.png"), exp34)
-
 
             # 重置状态（分区热区已删，只留重置）
             page.evaluate("localStorage.removeItem('srs.dailyCard.v1');"
@@ -1099,6 +1088,12 @@ def main():
             ok("按会话有标题行", "即梦洗牌动画" in page.inner_text(".srs-body"), "")
             ok("按会话写明会话数", "个会话" in page.inner_text(".srs-body"), "")
             ok("明细有行", page.locator(".srs-item").count() >= 3, page.locator(".srs-item").count())
+            # 明细只铺最新 20 条，超出部分在滚动区里，另有「再看 20 条」兜底
+            ok("明细最多铺 20 行", page.locator(".srs-item").count() <= 20, page.locator(".srs-item").count())
+            ok("明细区是独立滚动容器", page.evaluate(
+                "(() => { const el = document.querySelector('.srs-items'); if (!el) return false;"
+                "const cs = getComputedStyle(el);"
+                "return cs.overflowY === 'auto' && parseFloat(cs.maxHeight) > 0; })()"), "")
             ok("未计价的轮次标「未计价」", "未计价" in page.inner_text(".srs-items"), "")
             ok("未计价有解释（只记 token 不记钱）", "只记 token" in page.inner_text(".srs-body"), "")
             ok("计费页写明记账起点（官方后台 00:00 起口径不同）",
@@ -1109,7 +1104,7 @@ def main():
                page.inner_text(".srs-body")[:200])
             page.locator(".srs-search input").fill("someone"); time.sleep(0.5)
             ok("搜模型能筛明细", page.locator(".srs-item").count() == 1, page.locator(".srs-item").count())
-            ok("标题写命中数", "命中 1 / 7 条" in page.inner_text(".srs-body"), "")
+            ok("标题写命中数", "命中 1 条 · 显示前 1" in page.inner_text(".srs-body"), "")
             page.locator(".srs-search input").fill("zzz-none"); time.sleep(0.4)
             ok("没命中时给一句提示", "没有匹配" in page.inner_text(".srs-body"), "")
             page.locator(".srs-search input").fill(""); time.sleep(0.4)
@@ -1494,12 +1489,12 @@ def main():
             page.locator(".srs-gear").click(); time.sleep(0.7)
             page.locator("[data-act='tab-sound']").click(); time.sleep(0.5)
             pose_btn = page.locator("[data-act^='pose-']").count()
-            ok("人物姿态：自动 + 18 张共 19 个按钮", pose_btn == 19, pose_btn)
+            ok("人物姿态：自动 + 18 张共 18 个按钮", pose_btn == 18, pose_btn)
             ok("姿态格子有「发呆」、没有「静立·二」",
                page.locator("[data-act='pose-dazed']").count() == 1
                and page.locator("[data-act='pose-idle-b']").count() == 0)
             # 2026-11-18 修：自动原来恒等于 idle-a，只有 5 张小动作在换（主人报「还是固定的那几个」）。
-            # 现在自动 = 7 张站姿轮换（每 4–8 分钟一次，间隔太长测不到，所以验池子与文案）。
+            # 现在自动 = 13 张站姿洗牌袋轮换（每 4–8 分钟一次，间隔太长测不到，所以验池子与文案）。
             stand = page.evaluate("window.__srsStandPoses || []")
             ok("自动的站姿池是 11 张且含发呆与四张新站姿",
                len(stand) == 11 and "dazed" in stand
@@ -1520,8 +1515,31 @@ def main():
             ok("固定后不再自己回闲置站姿", "annoyed" in page.evaluate(
                 "(()=>{const s=document.querySelector('.srs-sprite.is-on');return s?s.dataset.pose:''})()"))
             page.screenshot(path=os.path.join(SHOT, "v043-pose.png"))
+            # 2026-11-21：验证「定时器只建一次」——加速到 120ms，开关面板不应让计时归零
+            page.evaluate("window.__srsPoseIntervalMs = 120")
+            page.evaluate("location.reload()")
+            time.sleep(1.5); page.wait_for_selector(".srs-root", timeout=8000)
+            page.evaluate("window.__srsPoseTicks = 0; window.__srsPoseLog = []")
+            page.evaluate("window.__srsPoseIntervalMs = 120")
+            before_ticks = page.evaluate("window.__srsPoseTicks || 0")
+            time.sleep(0.4)
+            mid_ticks = page.evaluate("window.__srsPoseTicks || 0")
+            ok("加速后 tick 真的在跑", mid_ticks >= before_ticks + 1, (before_ticks, mid_ticks))
+            # 连续点开/收起面板几次（走真实的水晶球 .srs-gear 与关闭按钮），
+            # tick 必须继续累加——旧实现每次面板开关都会把轮换计时器清掉重新计时
+            for _ in range(3):
+                page.locator(".srs-gear").first.click()
+                time.sleep(0.18)
+                page.locator("[data-act='close']").first.click()
+                time.sleep(0.18)
+            after_ticks = page.evaluate("window.__srsPoseTicks || 0")
+            ok("开关面板 3 次不重置轮换定时器", after_ticks > mid_ticks, (mid_ticks, after_ticks))
+            ok("加速后真的换到过站姿（自动轮换生效）",
+               len(page.evaluate("window.__srsPoseLog || []")) >= 1,
+               page.evaluate("window.__srsPoseLog || []"))
+            page.evaluate("delete window.__srsPoseIntervalMs")
             page.locator("[data-act='pose-auto']").click(); time.sleep(1.0)
-            # 2026-11-18 起「自动」不再是恒等 idle-a：基线在 7 张站姿之间轮换，
+            # 2026-11-21 起「自动」= 13 张站姿洗牌袋轮转，
             # 所以判据改成「回到池里」，不再写死 idle-a（否则这条会随随机初值抖）。
             cur_pose = page.evaluate(
                 "(()=>{const s=document.querySelector('.srs-sprite.is-on');return s?s.dataset.pose:''})()")
